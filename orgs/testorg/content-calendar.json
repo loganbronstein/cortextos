@@ -1,0 +1,82 @@
+{
+  "week_of": "2026-03-29",
+  "meta": {
+    "niche": "",
+    "platforms": [],
+    "script_format": "hook_body_cta",
+    "daily_slots": 3,
+    "skool_post": true
+  },
+  "days": {
+    "2026-03-29": {
+      "theme": "",
+      "slots": [
+        { "id": 1, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" },
+        { "id": 2, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" },
+        { "id": 3, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" }
+      ],
+      "skool_post": { "topic": "", "outline": "", "status": "empty" },
+      "notes": ""
+    },
+    "2026-03-30": {
+      "theme": "",
+      "slots": [
+        { "id": 1, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" },
+        { "id": 2, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" },
+        { "id": 3, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" }
+      ],
+      "skool_post": { "topic": "", "outline": "", "status": "empty" },
+      "notes": ""
+    },
+    "2026-03-31": {
+      "theme": "",
+      "slots": [
+        { "id": 1, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" },
+        { "id": 2, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" },
+        { "id": 3, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" }
+      ],
+      "skool_post": { "topic": "", "outline": "", "status": "empty" },
+      "notes": ""
+    },
+    "2026-04-01": {
+      "theme": "",
+      "slots": [
+        { "id": 1, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" },
+        { "id": 2, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" },
+        { "id": 3, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" }
+      ],
+      "skool_post": { "topic": "", "outline": "", "status": "empty" },
+      "notes": ""
+    },
+    "2026-04-02": {
+      "theme": "",
+      "slots": [
+        { "id": 1, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" },
+        { "id": 2, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" },
+        { "id": 3, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" }
+      ],
+      "skool_post": { "topic": "", "outline": "", "status": "empty" },
+      "notes": ""
+    },
+    "2026-04-03": {
+      "theme": "",
+      "slots": [
+        { "id": 1, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" },
+        { "id": 2, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" },
+        { "id": 3, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" }
+      ],
+      "skool_post": { "topic": "", "outline": "", "status": "empty" },
+      "notes": ""
+    },
+    "2026-04-04": {
+      "theme": "",
+      "slots": [
+        { "id": 1, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" },
+        { "id": 2, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" },
+        { "id": 3, "format": "short-form", "platform": "", "topic": "", "hook": "", "body": "", "cta": "", "script": "", "status": "empty" }
+      ],
+      "skool_post": { "topic": "", "outline": "", "status": "empty" },
+      "notes": ""
+    }
+  }
+}

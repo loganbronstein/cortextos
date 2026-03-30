@@ -1,0 +1,21 @@
+{
+  "id": "exp_1774846540_qo2gj",
+  "agent": "orch",
+  "metric": "accuracy",
+  "hypothesis": "New model improves accuracy",
+  "surface": "",
+  "direction": "higher",
+  "window": "24h",
+  "measurement": "",
+  "status": "completed",
+  "baseline_value": 90,
+  "result_value": 90,
+  "decision": "keep",
+  "learning": "",
+  "experiment_commit": null,
+  "tracking_commit": null,
+  "created_at": "2026-03-30T04:55:40Z",
+  "started_at": "2026-03-30T04:55:40Z",
+  "completed_at": "2026-03-30T04:56:06Z",
+  "changes_description": "Switched to better model"
+}

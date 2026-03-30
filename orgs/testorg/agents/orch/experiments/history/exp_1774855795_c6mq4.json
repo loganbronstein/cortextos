@@ -1,0 +1,21 @@
+{
+  "id": "exp_1774855795_c6mq4",
+  "agent": "orch",
+  "metric": "response_quality",
+  "hypothesis": "Testing hypothesis that shorter prompts improve quality",
+  "surface": "orgs/testorg/agents/orch/GOALS.md",
+  "direction": "higher",
+  "window": "12h",
+  "measurement": "",
+  "status": "proposed",
+  "baseline_value": 0,
+  "result_value": null,
+  "decision": null,
+  "learning": "",
+  "experiment_commit": null,
+  "tracking_commit": null,
+  "created_at": "2026-03-30T07:29:55Z",
+  "started_at": null,
+  "completed_at": null,
+  "changes_description": null
+}

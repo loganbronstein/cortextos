@@ -1,0 +1,159 @@
+import { Command } from 'commander';
+import { existsSync, mkdirSync, writeFileSync, copyFileSync, readFileSync, readdirSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+import { ensureDir } from '../utils/atomic.js';
+
+export const initCommand = new Command('init')
+  .argument('<org-name>', 'Organization name')
+  .option('--instance <id>', 'Instance ID', 'default')
+  .description('Create a new cortextOS organization')
+  .action(async (orgName: string, options: { instance: string }) => {
+    const instanceId = options.instance;
+    const ctxRoot = join(homedir(), '.cortextos', instanceId);
+    const projectRoot = process.cwd();
+
+    // Check if org already exists
+    const orgDir = join(projectRoot, 'orgs', orgName);
+    if (existsSync(orgDir)) {
+      console.log(`\n  Warning: Organization "${orgName}" already exists at ${orgDir}`);
+      console.log('  Existing files will NOT be overwritten. Only missing files will be created.\n');
+    }
+
+    console.log(`\nInitializing cortextOS organization: ${orgName}`);
+    console.log(`  Instance: ${instanceId}`);
+    console.log(`  State: ${ctxRoot}`);
+    console.log(`  Project: ${projectRoot}\n`);
+
+    // Create state directories
+    const stateDirs = [
+      ctxRoot,
+      join(ctxRoot, 'inbox'),
+      join(ctxRoot, 'inflight'),
+      join(ctxRoot, 'processed'),
+      join(ctxRoot, 'logs'),
+      join(ctxRoot, 'state'),
+      join(ctxRoot, 'heartbeats'),
+      join(ctxRoot, 'orgs', orgName, 'tasks'),
+      join(ctxRoot, 'orgs', orgName, 'approvals'),
+      join(ctxRoot, 'orgs', orgName, 'approvals', 'pending'),
+      join(ctxRoot, 'orgs', orgName, 'analytics'),
+      join(ctxRoot, 'orgs', orgName, 'analytics', 'events'),
+    ];
+
+    for (const dir of stateDirs) {
+      ensureDir(dir);
+    }
+    console.log('  Created state directories');
+
+    // Create project structure
+    const agentsDir = join(orgDir, 'agents');
+    ensureDir(agentsDir);
+
+    // Copy org template files if available
+    const orgTemplateDir = findOrgTemplateDir(projectRoot);
+    if (orgTemplateDir) {
+      copyOrgTemplateFiles(orgTemplateDir, orgDir, orgName);
+      console.log('  Copied org template files');
+    }
+
+    // Create org context.json (if not already from template)
+    const contextPath = join(orgDir, 'context.json');
+    if (!existsSync(contextPath)) {
+      writeFileSync(contextPath, JSON.stringify({
+        name: orgName,
+        description: '',
+        industry: '',
+        icp: '',
+        value_prop: '',
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        orchestrator: '',
+      }, null, 2) + '\n', 'utf-8');
+      console.log('  Created org context.json');
+    } else {
+      // Fill in timezone and name if empty
+      try {
+        const ctx = JSON.parse(readFileSync(contextPath, 'utf-8'));
+        if (!ctx.timezone) ctx.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (!ctx.name) ctx.name = orgName;
+        writeFileSync(contextPath, JSON.stringify(ctx, null, 2) + '\n', 'utf-8');
+      } catch { /* ignore */ }
+    }
+
+    // Create goals.json if not from template
+    const goalsPath = join(orgDir, 'goals.json');
+    if (!existsSync(goalsPath)) {
+      writeFileSync(goalsPath, JSON.stringify({
+        north_star: '',
+        daily_focus: '',
+        daily_focus_set_at: '',
+        goals: [],
+        bottleneck: '',
+        updated_at: '',
+      }, null, 2) + '\n', 'utf-8');
+    }
+
+    // Create secrets.env placeholder
+    const secretsPath = join(orgDir, 'secrets.env');
+    if (!existsSync(secretsPath)) {
+      writeFileSync(secretsPath, [
+        '# cortextOS secrets for ' + orgName,
+        '# Add your Telegram bot token and other secrets here',
+        'BOT_TOKEN=',
+        'CHAT_ID=',
+        'ACTIVITY_CHAT_ID=',
+        '',
+      ].join('\n'), 'utf-8');
+      console.log('  Created secrets.env');
+    }
+
+    // Create .env with instance ID
+    const envPath = join(projectRoot, '.env');
+    if (!existsSync(envPath)) {
+      writeFileSync(envPath, `CTX_INSTANCE_ID=${instanceId}\n`, 'utf-8');
+      console.log('  Created .env');
+    }
+
+    // Create knowledge.md if not from template
+    const knowledgePath = join(orgDir, 'knowledge.md');
+    if (!existsSync(knowledgePath)) {
+      writeFileSync(knowledgePath, `# ${orgName} - Shared Knowledge\n\nShared facts, metrics, and corrections for all agents.\n`, 'utf-8');
+    }
+
+    console.log(`\n  Organization "${orgName}" initialized.`);
+    console.log(`\n  Next steps:`);
+    console.log(`    1. Add your Telegram bot token to orgs/${orgName}/secrets.env`);
+    console.log(`    2. Add an agent: cortextos add-agent <name> --template orchestrator`);
+    console.log(`    3. Start: cortextos start\n`);
+  });
+
+function findOrgTemplateDir(projectRoot: string): string | null {
+  const candidates = [
+    join(projectRoot, 'templates', 'org'),
+    join(projectRoot, 'node_modules', 'cortextos', 'templates', 'org'),
+    join(__dirname, '..', '..', 'templates', 'org'),
+  ];
+  for (const dir of candidates) {
+    if (existsSync(dir)) return dir;
+  }
+  return null;
+}
+
+function copyOrgTemplateFiles(templateDir: string, orgDir: string, orgName: string): void {
+  try {
+    const files = readdirSync(templateDir);
+    for (const file of files) {
+      const srcPath = join(templateDir, file);
+      const destPath = join(orgDir, file);
+      if (existsSync(destPath)) continue; // Don't overwrite existing
+      try {
+        const stat = require('fs').statSync(srcPath);
+        if (stat.isFile()) {
+          let content = readFileSync(srcPath, 'utf-8');
+          content = content.replace(/\{\{org_name\}\}/g, orgName);
+          writeFileSync(destPath, content, 'utf-8');
+        }
+      } catch { /* skip */ }
+    }
+  } catch { /* skip */ }
+}

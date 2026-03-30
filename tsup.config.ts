@@ -1,0 +1,23 @@
+import { defineConfig } from 'tsup';
+
+export default defineConfig({
+  entry: {
+    cli: 'src/cli/index.ts',
+    daemon: 'src/daemon/index.ts',
+    'hooks/hook-permission-telegram': 'src/hooks/hook-permission-telegram.ts',
+    'hooks/hook-ask-telegram': 'src/hooks/hook-ask-telegram.ts',
+    'hooks/hook-planmode-telegram': 'src/hooks/hook-planmode-telegram.ts',
+    'hooks/hook-crash-alert': 'src/hooks/hook-crash-alert.ts',
+  },
+  format: ['cjs'],
+  target: 'node20',
+  clean: true,
+  splitting: false,
+  sourcemap: true,
+  dts: false,
+  shims: true,
+  banner: {
+    js: '#!/usr/bin/env node',
+  },
+  external: ['node-pty'],
+});

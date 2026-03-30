@@ -1,0 +1,30 @@
+node_modules/
+.claude/
+!.claude/orchestration-cortextos-node/
+dist/
+
+# Secrets
+.env
+!.env.example
+templates/*/.env
+orgs/*/.env
+orgs/*/agents/*/.env
+orgs/*/activity-channel.env
+.cortextos-env
+
+# Agent runtime data
+orgs/*/agents/*/local/
+orgs/*/agents/*/telegram-images/
+orgs/*/agents/*/memory/
+agents/*/local/
+agents/*/telegram-images/
+agents/*/memory/
+
+# Test artifacts
+test-results/
+*.log
+
+# Knowledge base
+knowledge-base/venv/
+knowledge-base/__pycache__/
+knowledge-base/scripts/__pycache__/

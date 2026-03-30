@@ -1,0 +1,5 @@
+experiment_id	agent	metric	value	baseline	status	hypothesis	commit_sha	timestamp
+exp_1774846426_5fvx7	orch	response_time	80	0	discard	Caching reduces response time by 20%	2026-03-30T04:54:06Z
+exp_1774846540_qo2gj	orch	accuracy	90	90	keep	New model improves accuracy	2026-03-30T04:56:06Z
+exp_1774849712_vkciw	orch	response_time	12.5	0	discard	Phase 23 test: shorten prompts reduce latency	2026-03-30T05:48:51Z
+exp_1774849758_7f8ac	orch	task_completion	87.5	87.5	keep	Higher completion rate test	2026-03-30T05:49:19Z

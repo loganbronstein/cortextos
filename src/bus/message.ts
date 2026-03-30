@@ -1,0 +1,167 @@
+import { readdirSync, readFileSync, renameSync, statSync } from 'fs';
+import { join } from 'path';
+import type { InboxMessage, Priority, BusPaths } from '../types/index.js';
+import { PRIORITY_MAP } from '../types/index.js';
+import { atomicWriteSync, ensureDir } from '../utils/atomic.js';
+import { acquireLock, releaseLock } from '../utils/lock.js';
+import { randomString } from '../utils/random.js';
+import { validateAgentName, validatePriority } from '../utils/validate.js';
+
+/**
+ * Send a message to another agent's inbox.
+ * Creates a JSON file with format: {pnum}-{epochMs}-from-{sender}-{rand5}.json
+ * Identical to bash send-message.sh output.
+ */
+export function sendMessage(
+  paths: BusPaths,
+  from: string,
+  to: string,
+  priority: Priority,
+  text: string,
+  replyTo?: string,
+): string {
+  validateAgentName(from);
+  validateAgentName(to);
+  validatePriority(priority);
+
+  const pnum = PRIORITY_MAP[priority];
+  const epochMs = Date.now();
+  const rand = randomString(5);
+  const msgId = `${epochMs}-${from}-${rand}`;
+  const filename = `${pnum}-${epochMs}-from-${from}-${rand}.json`;
+
+  const message: InboxMessage = {
+    id: msgId,
+    from,
+    to,
+    priority,
+    timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, '.000Z'),
+    text,
+    reply_to: replyTo || null,
+  };
+
+  // Write to target agent's inbox
+  const inboxDir = join(paths.ctxRoot, 'inbox', to);
+  ensureDir(inboxDir);
+  atomicWriteSync(join(inboxDir, filename), JSON.stringify(message));
+
+  return msgId;
+}
+
+/**
+ * Check inbox for pending messages.
+ * Reads inbox directory, moves messages to inflight, returns sorted array.
+ * Recovers stale inflight messages (>5 minutes old).
+ * Identical to bash check-inbox.sh behavior.
+ */
+export function checkInbox(paths: BusPaths): InboxMessage[] {
+  const { inbox, inflight } = paths;
+  ensureDir(inbox);
+  ensureDir(inflight);
+
+  // Acquire lock
+  if (!acquireLock(inbox)) {
+    return [];
+  }
+
+  try {
+    // Recover stale inflight messages (>5 min old)
+    recoverStaleInflight(inflight, inbox, 300);
+
+    // Read and sort messages by filename (priority then timestamp)
+    const files = readdirSync(inbox)
+      .filter(f => f.endsWith('.json') && !f.startsWith('.'))
+      .sort();
+
+    if (files.length === 0) {
+      return [];
+    }
+
+    const messages: InboxMessage[] = [];
+    for (const file of files) {
+      const srcPath = join(inbox, file);
+      try {
+        const content = readFileSync(srcPath, 'utf-8');
+        const msg: InboxMessage = JSON.parse(content);
+        // Move to inflight
+        const destPath = join(inflight, file);
+        renameSync(srcPath, destPath);
+        messages.push(msg);
+      } catch {
+        // Move corrupt files to .errors/
+        const errDir = join(inbox, '.errors');
+        ensureDir(errDir);
+        try {
+          renameSync(srcPath, join(errDir, file));
+        } catch {
+          // Ignore if move fails
+        }
+      }
+    }
+
+    return messages;
+  } finally {
+    releaseLock(inbox);
+  }
+}
+
+/**
+ * Acknowledge a message by moving it from inflight to processed.
+ * Identical to bash ack-inbox.sh behavior.
+ */
+export function ackInbox(paths: BusPaths, messageId: string): void {
+  const { inflight, processed } = paths;
+  ensureDir(processed);
+
+  // Find the file in inflight that contains this message ID
+  let files: string[];
+  try {
+    files = readdirSync(inflight).filter(f => f.endsWith('.json'));
+  } catch {
+    return;
+  }
+
+  for (const file of files) {
+    const filePath = join(inflight, file);
+    try {
+      const content = readFileSync(filePath, 'utf-8');
+      const msg = JSON.parse(content);
+      if (msg.id === messageId) {
+        renameSync(filePath, join(processed, file));
+        return;
+      }
+    } catch {
+      // Skip corrupt files
+    }
+  }
+}
+
+/**
+ * Recover stale inflight messages (older than thresholdSeconds) back to inbox.
+ */
+function recoverStaleInflight(
+  inflightDir: string,
+  inboxDir: string,
+  thresholdSeconds: number,
+): void {
+  const now = Math.floor(Date.now() / 1000);
+  let files: string[];
+  try {
+    files = readdirSync(inflightDir).filter(f => f.endsWith('.json'));
+  } catch {
+    return;
+  }
+
+  for (const file of files) {
+    const filePath = join(inflightDir, file);
+    try {
+      const stat = statSync(filePath);
+      const mtime = Math.floor(stat.mtimeMs / 1000);
+      if (now - mtime > thresholdSeconds) {
+        renameSync(filePath, join(inboxDir, file));
+      }
+    } catch {
+      // Ignore stat/move errors
+    }
+  }
+}

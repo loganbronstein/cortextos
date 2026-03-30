@@ -1,0 +1,30 @@
+{
+  "agent_name": "",
+  "enabled": true,
+  "startup_delay": 0,
+  "max_session_seconds": 255600,
+  "max_crashes_per_day": 10,
+  "working_directory": "",
+  "crons": [
+    {
+      "name": "heartbeat",
+      "interval": "4h",
+      "prompt": "Read HEARTBEAT.md and follow its instructions. Update your heartbeat, check inbox, review agent health via read-all-heartbeats.sh, and work on coordination tasks."
+    },
+    {
+      "name": "check-approvals",
+      "interval": "2h",
+      "prompt": "Check for pending approvals: ls $CTX_ROOT/orgs/$CTX_ORG/approvals/pending/ 2>/dev/null. Review any pending approval files and route to human via Telegram if needed."
+    },
+    {
+      "name": "morning-review",
+      "interval": "24h",
+      "prompt": "Read skills/morning-review/SKILL.md and execute the full morning review workflow. Include goal cascade from skills/goal-management/SKILL.md."
+    },
+    {
+      "name": "evening-review",
+      "interval": "24h",
+      "prompt": "Read skills/evening-review/SKILL.md and execute the full evening review workflow. Summarize the day, queue overnight tasks."
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+import { AgentManager } from './agent-manager.js';
+import { IPCServer } from './ipc-server.js';
+import { writeFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+import { ensureDir } from '../utils/atomic.js';
+
+/**
+ * cortextOS Daemon - single process managing all agents.
+ * Managed by PM2 for process persistence and auto-restart.
+ */
+class Daemon {
+  private agentManager: AgentManager | null = null;
+  private ipcServer: IPCServer | null = null;
+  private instanceId: string;
+  private ctxRoot: string;
+
+  constructor() {
+    this.instanceId = process.env.CTX_INSTANCE_ID || 'default';
+    // Always derive ctxRoot from instanceId to avoid inheriting a parent cortextOS's CTX_ROOT
+    this.ctxRoot = join(homedir(), '.cortextos', this.instanceId);
+  }
+
+  async start(): Promise<void> {
+    console.log(`[daemon] Starting cortextOS daemon (instance: ${this.instanceId})`);
+
+    const frameworkRoot = process.env.CTX_FRAMEWORK_ROOT || '';
+    const org = process.env.CTX_ORG || '';
+
+    if (!frameworkRoot) {
+      console.error('[daemon] CTX_FRAMEWORK_ROOT not set');
+      process.exit(1);
+    }
+
+    // Write PID file
+    const pidFile = join(this.ctxRoot, 'daemon.pid');
+    ensureDir(this.ctxRoot);
+    writeFileSync(pidFile, String(process.pid), 'utf-8');
+
+    // Create agent manager
+    this.agentManager = new AgentManager(this.instanceId, this.ctxRoot, frameworkRoot, org);
+
+    // Start IPC server
+    this.ipcServer = new IPCServer(this.agentManager, this.instanceId);
+    await this.ipcServer.start();
+
+    // Discover and start agents
+    await this.agentManager.discoverAndStart();
+
+    console.log(`[daemon] Running (pid: ${process.pid})`);
+
+    // Handle shutdown signals
+    const shutdown = async () => {
+      console.log('[daemon] Shutting down...');
+      if (this.agentManager) {
+        await this.agentManager.stopAll();
+      }
+      if (this.ipcServer) {
+        this.ipcServer.stop();
+      }
+      // Clean up PID file
+      try {
+        const { unlinkSync } = require('fs');
+        unlinkSync(pidFile);
+      } catch { /* ignore */ }
+      process.exit(0);
+    };
+
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+  }
+}
+
+// Start daemon
+const daemon = new Daemon();
+daemon.start().catch(err => {
+  console.error('[daemon] Fatal error:', err);
+  process.exit(1);
+});

@@ -1,0 +1,21 @@
+{
+  "id": "exp_1774850254_q0hqu",
+  "agent": "orch",
+  "metric": "test_metric",
+  "hypothesis": "Phase 25 experiment test",
+  "surface": "",
+  "direction": "higher",
+  "window": "24h",
+  "measurement": "",
+  "status": "proposed",
+  "baseline_value": 0,
+  "result_value": null,
+  "decision": null,
+  "learning": "",
+  "experiment_commit": null,
+  "tracking_commit": null,
+  "created_at": "2026-03-30T05:57:34Z",
+  "started_at": null,
+  "completed_at": null,
+  "changes_description": null
+}

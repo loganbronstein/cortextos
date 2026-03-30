@@ -1,0 +1,789 @@
+import { Command } from 'commander';
+import { spawnSync } from 'child_process';
+import { join } from 'path';
+import { sendMessage, checkInbox, ackInbox } from '../bus/message.js';
+import { createTask, updateTask, completeTask, listTasks, checkStaleTasks, archiveTasks, checkHumanTasks } from '../bus/task.js';
+import { logEvent } from '../bus/event.js';
+import { updateHeartbeat, readAllHeartbeats } from '../bus/heartbeat.js';
+import { selfRestart, hardRestart, autoCommit, checkGoalStaleness, postActivity } from '../bus/system.js';
+import { createExperiment, runExperiment, evaluateExperiment, listExperiments, gatherContext, manageCycle, loadExperimentConfig } from '../bus/experiment.js';
+import { browseCatalog, installCommunityItem, prepareSubmission, submitCommunityItem } from '../bus/catalog.js';
+import { collectMetrics, parseUsageOutput, storeUsageData, checkUpstream, collectTelegramCommands, registerTelegramCommands } from '../bus/metrics.js';
+import { createApproval, updateApproval } from '../bus/approval.js';
+import { queryKnowledgeBase, ingestKnowledgeBase, ensureKBDirs } from '../bus/knowledge-base.js';
+import { resolvePaths } from '../utils/paths.js';
+import { resolveEnv } from '../utils/env.js';
+import { TelegramAPI } from '../telegram/api.js';
+import { logOutboundMessage, cacheLastSent } from '../telegram/logging.js';
+import type { Priority, TaskStatus, EventCategory, EventSeverity, ApprovalCategory, ApprovalStatus } from '../types/index.js';
+
+export const busCommand = new Command('bus')
+  .description('Bus commands for agent messaging, tasks, and events');
+
+busCommand
+  .command('send-message')
+  .argument('<to>', 'Target agent')
+  .argument('<priority>', 'Message priority (urgent, high, normal, low)')
+  .argument('<text>', 'Message text')
+  .option('--reply-to <id>', 'Reply to message ID')
+  .action((to: string, priority: string, text: string, opts: { replyTo?: string }) => {
+    const validPriorities: Priority[] = ['urgent', 'high', 'normal', 'low'];
+    if (!validPriorities.includes(priority as Priority)) {
+      console.error(`Invalid priority '${priority}'. Must be one of: ${validPriorities.join(', ')}`);
+      process.exit(1);
+    }
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+
+    // Warn if target agent doesn't exist (check project dir)
+    const { existsSync } = require('fs');
+    const { join } = require('path');
+    const projectRoot = env.projectRoot || env.frameworkRoot || process.cwd();
+    const orgsDir = join(projectRoot, 'orgs');
+    let agentExists = false;
+    if (existsSync(orgsDir)) {
+      const { readdirSync } = require('fs');
+      try {
+        for (const org of readdirSync(orgsDir)) {
+          if (existsSync(join(orgsDir, org, 'agents', to))) {
+            agentExists = true;
+            break;
+          }
+        }
+      } catch { /* skip */ }
+    }
+    if (!agentExists) {
+      console.error(`Warning: agent '${to}' not found in project. Message will be queued but may never be read.`);
+    }
+
+    const msgId = sendMessage(paths, env.agentName, to, priority as Priority, text, opts.replyTo);
+    console.log(msgId);
+  });
+
+busCommand
+  .command('check-inbox')
+  .action(() => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    const messages = checkInbox(paths);
+    console.log(JSON.stringify(messages));
+  });
+
+busCommand
+  .command('ack-inbox')
+  .argument('<id>', 'Message ID to acknowledge')
+  .action((id: string) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    ackInbox(paths, id);
+    console.log(`ACK'd ${id}`);
+  });
+
+busCommand
+  .command('create-task')
+  .argument('<title>', 'Task title')
+  .option('--desc <description>', 'Task description')
+  .option('--assignee <agent>', 'Assigned agent')
+  .option('--priority <p>', 'Priority (urgent, high, normal, low)', 'normal')
+  .option('--project <name>', 'Project name')
+  .option('--needs-approval', 'Require human approval before execution')
+  .action((title: string, opts: { desc?: string; assignee?: string; priority: string; project?: string; needsApproval?: boolean }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    const taskId = createTask(paths, env.agentName, env.org, title, {
+      description: opts.desc,
+      assignee: opts.assignee,
+      priority: opts.priority as Priority,
+      project: opts.project,
+      needsApproval: opts.needsApproval ?? false,
+    });
+    console.log(taskId);
+  });
+
+busCommand
+  .command('update-task')
+  .argument('<id>', 'Task ID')
+  .argument('<status>', 'New status (pending, in_progress, completed, blocked, cancelled)')
+  .action((id: string, status: string) => {
+    const validStatuses: TaskStatus[] = ['pending', 'in_progress', 'completed', 'blocked', 'cancelled'];
+    if (!validStatuses.includes(status as TaskStatus)) {
+      console.error(`Invalid status '${status}'. Must be one of: ${validStatuses.join(', ')}`);
+      process.exit(1);
+    }
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    updateTask(paths, id, status as TaskStatus);
+    console.log(`Updated ${id} -> ${status}`);
+  });
+
+busCommand
+  .command('complete-task')
+  .argument('<id>', 'Task ID')
+  .option('--result <text>', 'Completion result')
+  .action((id: string, opts: { result?: string }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    completeTask(paths, id, opts.result);
+    console.log(`Completed ${id}`);
+  });
+
+busCommand
+  .command('list-tasks')
+  .option('--agent <name>', 'Filter by agent')
+  .option('--status <s>', 'Filter by status')
+  .option('--format <fmt>', 'Output format: json or text', 'text')
+  .action((opts: { agent?: string; status?: string; format?: string }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    const tasks = listTasks(paths, {
+      agent: opts.agent,
+      status: opts.status as TaskStatus,
+    });
+
+    if (opts.format === 'json') {
+      console.log(JSON.stringify(tasks, null, 2));
+      return;
+    }
+
+    // Text table format
+    if (tasks.length === 0) {
+      console.log('  No tasks found.');
+      return;
+    }
+
+    const PRIORITY_ICON: Record<string, string> = { urgent: '🔴', high: '🟠', normal: '🔵', low: '⚪' };
+    const STATUS_ICON: Record<string, string> = { pending: '○', in_progress: '●', blocked: '◑', completed: '✓', done: '✓', cancelled: '✗' };
+
+    console.log(`\n  Tasks (${tasks.length})\n`);
+    const header = '  Status  Pri  ID                        Assignee         Title';
+    const separator = '  ' + '-'.repeat(header.length - 2);
+    console.log(header);
+    console.log(separator);
+
+    for (const t of tasks) {
+      const statusIcon = (STATUS_ICON[t.status] || '?').padEnd(8);
+      const priIcon = (PRIORITY_ICON[t.priority] || '·').padEnd(5);
+      const id = t.id.substring(0, 26).padEnd(26);
+      const assignee = (t.assigned_to || '-').substring(0, 16).padEnd(17);
+      const title = t.title.substring(0, 50);
+      console.log(`  ${statusIcon}${priIcon}${id}${assignee}${title}`);
+    }
+    console.log('');
+  });
+
+busCommand
+  .command('log-event')
+  .argument('<category>', 'Event category')
+  .argument('<event>', 'Event name')
+  .argument('<severity>', 'Severity (info, warning, error, critical)')
+  .option('--meta <json>', 'Metadata JSON string', '{}')
+  .action((category: string, event: string, severity: string, opts: { meta: string }) => {
+    const validCategories: EventCategory[] = ['action', 'error', 'metric', 'milestone', 'heartbeat', 'message', 'task', 'approval'];
+    if (!validCategories.includes(category as EventCategory)) {
+      console.error(`Invalid category '${category}'. Must be one of: ${validCategories.join(', ')}`);
+      process.exit(1);
+    }
+    const validSeverities: EventSeverity[] = ['info', 'warning', 'error', 'critical'];
+    if (!validSeverities.includes(severity as EventSeverity)) {
+      console.error(`Invalid severity '${severity}'. Must be one of: ${validSeverities.join(', ')}`);
+      process.exit(1);
+    }
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    logEvent(paths, env.agentName, env.org, category as EventCategory, event, severity as EventSeverity, opts.meta);
+    console.log(`Logged ${category}/${event} (${severity})`);
+  });
+
+busCommand
+  .command('update-heartbeat')
+  .argument('<status>', 'Heartbeat status message')
+  .option('--task <task>', 'Current task description')
+  .option('--timezone <tz>', 'Timezone for day/night mode detection')
+  .option('--interval <i>', 'Loop interval from cron config')
+  .action((status: string, opts: { task?: string; timezone?: string; interval?: string }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    updateHeartbeat(paths, env.agentName, status, {
+      org: env.org,
+      timezone: opts.timezone,
+      loopInterval: opts.interval,
+      currentTask: opts.task,
+    });
+    console.log(`Heartbeat updated: ${env.agentName}`);
+  });
+
+busCommand
+  .command('read-all-heartbeats')
+  .description('Read heartbeat files for all agents in the system')
+  .option('--format <fmt>', 'Output format: json or text', 'text')
+  .action((opts: { format?: string }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    const heartbeats = readAllHeartbeats(paths);
+
+    if (opts.format === 'json') {
+      console.log(JSON.stringify(heartbeats, null, 2));
+      return;
+    }
+
+    if (heartbeats.length === 0) {
+      console.log('No agents found.');
+      return;
+    }
+
+    for (const hb of heartbeats) {
+      const stale = new Date(hb.last_heartbeat) < new Date(Date.now() - 2 * 60 * 60 * 1000);
+      const staleFlag = stale ? ' [STALE]' : '';
+      console.log(`${hb.agent} (${hb.org}) — ${hb.status}${staleFlag} — last seen ${hb.last_heartbeat}`);
+      if (hb.current_task) console.log(`  task: ${hb.current_task}`);
+    }
+  });
+
+busCommand
+  .command('check-stale-tasks')
+  .description('Find stale tasks (in_progress >2h, pending >24h, overdue)')
+  .action(() => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    const report = checkStaleTasks(paths);
+    console.log(JSON.stringify(report));
+  });
+
+busCommand
+  .command('archive-tasks')
+  .description('Archive completed tasks older than 7 days')
+  .option('--dry-run', 'Show what would be archived without modifying files')
+  .action((opts: { dryRun?: boolean }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    const report = archiveTasks(paths, opts.dryRun ?? false);
+    console.log(JSON.stringify(report));
+  });
+
+busCommand
+  .command('check-human-tasks')
+  .description('Find stale human-assigned tasks (>24h)')
+  .action(() => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    const tasks = checkHumanTasks(paths);
+    console.log(JSON.stringify(tasks));
+  });
+
+busCommand
+  .command('self-restart')
+  .description('Plan a self-restart (daemon handles actual restart via IPC)')
+  .option('--reason <why>', 'Reason for restart')
+  .action((opts: { reason?: string }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    selfRestart(paths, env.agentName, opts.reason);
+    console.log('Restart planned');
+  });
+
+busCommand
+  .command('hard-restart')
+  .description('Plan a hard restart (fresh session, no --continue)')
+  .option('--reason <why>', 'Reason for restart')
+  .action((opts: { reason?: string }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    hardRestart(paths, env.agentName, opts.reason);
+    console.log('Hard restart planned');
+  });
+
+busCommand
+  .command('auto-commit')
+  .description('Stage safe files for commit (never pushes)')
+  .option('--dry-run', 'Show what would be staged without modifying git')
+  .action((opts: { dryRun?: boolean }) => {
+    const env = resolveEnv();
+    const projectDir = env.projectRoot || env.frameworkRoot || process.cwd();
+    const report = autoCommit(projectDir, opts.dryRun ?? false);
+    console.log(JSON.stringify(report));
+  });
+
+busCommand
+  .command('check-goal-staleness')
+  .description('Detect agents with stale GOALS.md')
+  .option('--threshold <days>', 'Staleness threshold in days', '7')
+  .action((opts: { threshold: string }) => {
+    const env = resolveEnv();
+    const projectRoot = env.projectRoot || env.frameworkRoot || process.cwd();
+    const report = checkGoalStaleness(projectRoot, parseInt(opts.threshold, 10));
+    console.log(JSON.stringify(report, null, 2));
+  });
+
+busCommand
+  .command('post-activity')
+  .description('Post a message to the org Telegram activity channel')
+  .argument('<message>', 'Message to post')
+  .action(async (message: string) => {
+    const env = resolveEnv();
+    const orgDir = env.agentDir ? env.agentDir.replace(/\/agents\/.*$/, '') : '';
+    const success = await postActivity(orgDir, env.ctxRoot, env.org, message);
+    if (success) {
+      console.log('Activity posted');
+    } else {
+      console.error('Failed to post activity. Check that ACTIVITY_CHAT_ID is set in your org secrets.env or .env file.');
+    }
+  });
+
+busCommand
+  .command('create-experiment')
+  .description('Create a new experiment proposal')
+  .argument('<metric>', 'Metric to measure')
+  .argument('<hypothesis>', 'Hypothesis to test')
+  .option('--surface <path>', 'Surface file path')
+  .option('--direction <dir>', 'Direction: higher or lower', 'higher')
+  .option('--window <dur>', 'Measurement window', '24h')
+  .action((metric: string, hypothesis: string, opts: { surface?: string; direction?: string; window?: string }) => {
+    const env = resolveEnv();
+    const agentDir = env.agentDir || process.cwd();
+    const id = createExperiment(agentDir, env.agentName, metric, hypothesis, {
+      surface: opts.surface,
+      direction: opts.direction as 'higher' | 'lower',
+      window: opts.window,
+    });
+    console.log(id);
+
+    // If approval_required is configured, auto-create an approval
+    const config = loadExperimentConfig(agentDir);
+    if (config.approval_required) {
+      const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+      const approvalId = createApproval(
+        paths,
+        env.agentName,
+        env.org,
+        `Run experiment: ${metric} — ${hypothesis.slice(0, 80)}`,
+        'other',
+        `Experiment ID: ${id}\nMetric: ${metric}\nHypothesis: ${hypothesis}`,
+      );
+      console.log(`approval_required: ${approvalId}`);
+    }
+  });
+
+busCommand
+  .command('run-experiment')
+  .description('Start running a proposed experiment')
+  .argument('<id>', 'Experiment ID')
+  .argument('[description]', 'Description of changes')
+  .action((id: string, description?: string) => {
+    const env = resolveEnv();
+    const agentDir = env.agentDir || process.cwd();
+    const experiment = runExperiment(agentDir, id, description);
+    console.log(JSON.stringify(experiment, null, 2));
+  });
+
+busCommand
+  .command('evaluate-experiment')
+  .description('Evaluate a running experiment with a measured value')
+  .argument('<id>', 'Experiment ID')
+  .argument('<value>', 'Measured value')
+  .option('--score <n>', 'Score 1-10')
+  .option('--justification <text>', 'Justification text')
+  .action((id: string, value: string, opts: { score?: string; justification?: string }) => {
+    const env = resolveEnv();
+    const agentDir = env.agentDir || process.cwd();
+    const experiment = evaluateExperiment(agentDir, id, parseFloat(value), {
+      score: opts.score ? parseInt(opts.score, 10) : undefined,
+      justification: opts.justification,
+    });
+    console.log(JSON.stringify(experiment, null, 2));
+  });
+
+busCommand
+  .command('list-experiments')
+  .description('List experiments with optional filters')
+  .option('--agent <name>', 'Filter by agent')
+  .option('--status <s>', 'Filter by status')
+  .option('--metric <m>', 'Filter by metric')
+  .option('--json', 'Output as JSON')
+  .action((opts: { agent?: string; status?: string; metric?: string; json?: boolean }) => {
+    const env = resolveEnv();
+    const agentDir = env.agentDir || process.cwd();
+    const experiments = listExperiments(agentDir, {
+      agent: opts.agent,
+      status: opts.status,
+      metric: opts.metric,
+    });
+    console.log(JSON.stringify(experiments, null, 2));
+  });
+
+busCommand
+  .command('gather-context')
+  .description('Gather experiment context for an agent')
+  .option('--agent <name>', 'Agent name')
+  .option('--format <fmt>', 'Output format: json or markdown', 'json')
+  .action((opts: { agent?: string; format?: string }) => {
+    const env = resolveEnv();
+    const agentDir = env.agentDir || process.cwd();
+    const agentName = opts.agent || env.agentName;
+    const context = gatherContext(agentDir, agentName, { format: opts.format as 'json' | 'markdown' });
+    console.log(JSON.stringify(context, null, 2));
+  });
+
+busCommand
+  .command('manage-cycle')
+  .description('Manage experiment cycles')
+  .argument('<action>', 'Action: create, modify, remove, list')
+  .argument('<agent>', 'Agent name')
+  .option('--metric <name>', 'Metric name')
+  .option('--surface <path>', 'Surface path')
+  .option('--direction <dir>', 'Direction: higher or lower')
+  .option('--window <dur>', 'Measurement window')
+  .option('--cycle <name>', 'Cycle name')
+  .action((action: string, agent: string, opts: { metric?: string; surface?: string; direction?: string; window?: string; cycle?: string }) => {
+    const env = resolveEnv();
+    const agentDir = env.agentDir || process.cwd();
+    const cycles = manageCycle(agentDir, action as 'create' | 'modify' | 'remove' | 'list', {
+      agent,
+      name: opts.cycle,
+      metric: opts.metric,
+      surface: opts.surface,
+      direction: opts.direction as 'higher' | 'lower',
+      window: opts.window,
+    });
+    console.log(JSON.stringify(cycles, null, 2));
+  });
+
+busCommand
+  .command('browse-catalog')
+  .description('Browse community catalog for items')
+  .option('--type <type>', 'Filter by type (skill, agent, org)')
+  .option('--tag <tag>', 'Filter by tag')
+  .option('--search <query>', 'Search by name or description')
+  .action((opts: { type?: string; tag?: string; search?: string }) => {
+    const env = resolveEnv();
+    const frameworkRoot = env.frameworkRoot || env.projectRoot || process.cwd();
+    const result = browseCatalog(frameworkRoot, env.ctxRoot, {
+      type: opts.type,
+      tag: opts.tag,
+      search: opts.search,
+    });
+    console.log(JSON.stringify(result, null, 2));
+  });
+
+busCommand
+  .command('install-community-item')
+  .description('Install a community catalog item')
+  .argument('<name>', 'Item name to install')
+  .option('--dry-run', 'Show what would be installed without modifying files')
+  .action((name: string, opts: { dryRun?: boolean }) => {
+    const env = resolveEnv();
+    const frameworkRoot = env.frameworkRoot || env.projectRoot || process.cwd();
+    const result = installCommunityItem(frameworkRoot, env.ctxRoot, name, {
+      dryRun: opts.dryRun,
+      agentDir: env.agentDir,
+    });
+    console.log(JSON.stringify(result, null, 2));
+  });
+
+busCommand
+  .command('prepare-submission')
+  .description('Prepare a skill/agent/org for community submission with PII scanning')
+  .argument('<type>', 'Item type (skill, agent, org)')
+  .argument('<source-path>', 'Source directory path')
+  .argument('<name>', 'Item name')
+  .option('--dry-run', 'Scan without keeping staged files')
+  .action((type: string, sourcePath: string, name: string, opts: { dryRun?: boolean }) => {
+    const env = resolveEnv();
+    const result = prepareSubmission(env.ctxRoot, type, sourcePath, name, {
+      dryRun: opts.dryRun,
+    });
+    console.log(JSON.stringify(result, null, 2));
+  });
+
+busCommand
+  .command('submit-community-item')
+  .description('Submit a prepared item to the community catalog')
+  .argument('<name>', 'Item name')
+  .argument('<type>', 'Item type (skill, agent, org)')
+  .argument('<description>', 'Item description')
+  .option('--dry-run', 'Show what would be submitted')
+  .action((name: string, type: string, description: string, opts: { dryRun?: boolean }) => {
+    const env = resolveEnv();
+    const frameworkRoot = env.frameworkRoot || env.projectRoot || process.cwd();
+    const result = submitCommunityItem(frameworkRoot, env.ctxRoot, name, type, description, {
+      dryRun: opts.dryRun,
+    });
+    console.log(JSON.stringify(result, null, 2));
+  });
+
+busCommand
+  .command('collect-metrics')
+  .description('Collect and aggregate system metrics across all agents')
+  .action(() => {
+    const env = resolveEnv();
+    const report = collectMetrics(env.ctxRoot, env.org || undefined);
+    console.log(JSON.stringify(report, null, 2));
+  });
+
+busCommand
+  .command('scrape-usage')
+  .description('Parse Claude Code /usage output and store usage data')
+  .argument('<agent>', 'Agent name')
+  .argument('<output>', 'Usage output text to parse')
+  .action((agent: string, output: string) => {
+    const env = resolveEnv();
+    const data = parseUsageOutput(output, agent);
+    storeUsageData(env.ctxRoot, data);
+    console.log(JSON.stringify(data, null, 2));
+  });
+
+busCommand
+  .command('check-upstream')
+  .description('Check canonical repo for framework updates')
+  .option('--apply', 'Merge upstream changes (requires user approval)')
+  .action((opts: { apply?: boolean }) => {
+    const env = resolveEnv();
+    const frameworkRoot = env.frameworkRoot || env.projectRoot || process.cwd();
+    const result = checkUpstream(frameworkRoot, { apply: opts.apply });
+    console.log(JSON.stringify(result, null, 2));
+  });
+
+busCommand
+  .command('register-telegram-commands')
+  .description('Register skills as Telegram bot commands')
+  .argument('<bot-token>', 'Telegram bot token')
+  .argument('<scan-dirs...>', 'Directories to scan for skills')
+  .action(async (botToken: string, scanDirs: string[]) => {
+    const commands = collectTelegramCommands(scanDirs);
+    const result = await registerTelegramCommands(botToken, commands);
+    console.log(JSON.stringify(result, null, 2));
+  });
+
+busCommand
+  .command('send-telegram')
+  .description('Send a message to a Telegram chat')
+  .argument('<chat-id>', 'Telegram chat ID')
+  .argument('<message>', 'Message text (supports Telegram Markdown)')
+  .option('--image <path>', 'Send a photo with caption')
+  .action(async (chatId: string, message: string, opts: { image?: string }) => {
+    // Resolve bot token: agent .env first, then process.env
+    const env = resolveEnv();
+    let botToken = '';
+
+    // 1. Check agent .env (most specific)
+    if (env.agentDir) {
+      const { readFileSync, existsSync } = require('fs');
+      const { join } = require('path');
+      const agentEnv = join(env.agentDir, '.env');
+      if (existsSync(agentEnv)) {
+        const content = readFileSync(agentEnv, 'utf-8');
+        const match = content.match(/^BOT_TOKEN=(.+)$/m);
+        if (match && match[1].trim()) botToken = match[1].trim();
+      }
+    }
+
+    // 2. Fall back to process env
+    if (!botToken) {
+      botToken = process.env.BOT_TOKEN || '';
+    }
+
+    if (!botToken) {
+      console.error('Error: BOT_TOKEN not set. Set it in your agent .env file or as an environment variable.');
+      process.exit(1);
+    }
+
+    const api = new TelegramAPI(botToken);
+    try {
+      let sentMessageId = 0;
+      if (opts.image) {
+        const result = await api.sendPhoto(chatId, opts.image, message);
+        sentMessageId = result?.message_id ?? 0;
+      } else {
+        const result = await api.sendMessage(chatId, message);
+        sentMessageId = result?.message_id ?? 0;
+      }
+
+      // Log outbound and cache last-sent for context injection
+      const env = resolveEnv();
+      if (env.agentName && env.instanceId) {
+        const ctxRoot = require('path').join(require('os').homedir(), '.cortextos', env.instanceId);
+        logOutboundMessage(ctxRoot, env.agentName, chatId, message, sentMessageId);
+        cacheLastSent(ctxRoot, env.agentName, chatId, message);
+      }
+
+      console.log('Message sent');
+    } catch (err: any) {
+      console.error(`Failed to send: ${err.message || err}`);
+      process.exit(1);
+    }
+  });
+
+busCommand
+  .command('create-approval')
+  .description('Request human approval for a high-stakes action')
+  .argument('<title>', 'What you are requesting approval for')
+  .argument('<category>', 'Category: external-comms, financial, deployment, data-deletion, other')
+  .argument('[context]', 'Additional context')
+  .action((title: string, category: string, context?: string) => {
+    const validCategories: ApprovalCategory[] = ['external-comms', 'financial', 'deployment', 'data-deletion', 'other'];
+    if (!validCategories.includes(category as ApprovalCategory)) {
+      console.error(`Invalid category '${category}'. Must be one of: ${validCategories.join(', ')}`);
+      process.exit(1);
+    }
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    const id = createApproval(paths, env.agentName, env.org, title, category as ApprovalCategory, context || '');
+    console.log(id);
+  });
+
+busCommand
+  .command('update-approval')
+  .description('Resolve an approval request')
+  .argument('<id>', 'Approval ID')
+  .argument('<status>', 'Resolution: approved or denied')
+  .argument('[note]', 'Resolution note')
+  .action((id: string, status: string, note?: string) => {
+    const validStatuses: ApprovalStatus[] = ['approved', 'rejected'];
+    if (!validStatuses.includes(status as ApprovalStatus)) {
+      console.error(`Invalid status '${status}'. Must be one of: approved, rejected`);
+      process.exit(1);
+    }
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    updateApproval(paths, id, status as ApprovalStatus, note);
+    console.log(`Approval ${id} -> ${status}`);
+  });
+
+// ---------------------------------------------------------------------------
+// Knowledge Base commands
+// ---------------------------------------------------------------------------
+
+busCommand
+  .command('kb-query')
+  .description('Query the knowledge base (RAG search)')
+  .argument('<question>', 'Question or search query')
+  .option('--org <org>', 'Organization name')
+  .option('--agent <name>', 'Agent name (for private scope)')
+  .option('--scope <s>', 'Scope: shared, private, or all', 'all')
+  .option('--top-k <n>', 'Number of results', '5')
+  .option('--threshold <f>', 'Minimum similarity score (0-1)', '0.5')
+  .option('--json', 'Output raw JSON')
+  .action((question: string, opts: { org?: string; agent?: string; scope?: string; topK?: string; threshold?: string; json?: boolean }) => {
+    const env = resolveEnv();
+    const org = opts.org || env.org;
+    if (!org) {
+      console.error('ERROR: --org or CTX_ORG required');
+      process.exit(1);
+    }
+
+    const result = queryKnowledgeBase(
+      resolvePaths(env.agentName, env.instanceId, org),
+      question,
+      {
+        org,
+        agent: opts.agent || env.agentName,
+        scope: (opts.scope as 'shared' | 'private' | 'all') || 'all',
+        topK: parseInt(opts.topK || '5', 10),
+        threshold: parseFloat(opts.threshold || '0.5'),
+        frameworkRoot: env.frameworkRoot || process.cwd(),
+        instanceId: env.instanceId,
+      },
+    );
+
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+
+    if (result.results.length === 0) {
+      console.log(`No results found for: "${question}"`);
+      return;
+    }
+
+    console.log(`\n  Knowledge Base Results (${result.results.length}/${result.total})\n`);
+    for (let i = 0; i < result.results.length; i++) {
+      const r = result.results[i];
+      console.log(`  [${i + 1}] Score: ${r.score.toFixed(3)} | ${r.source_file}`);
+      console.log(`      ${r.content.substring(0, 200).replace(/\n/g, ' ')}...`);
+      console.log('');
+    }
+  });
+
+busCommand
+  .command('kb-ingest')
+  .description('Ingest files or directories into the knowledge base')
+  .argument('<paths...>', 'Files or directories to ingest')
+  .option('--org <org>', 'Organization name')
+  .option('--agent <name>', 'Agent name (for private scope)')
+  .option('--scope <s>', 'Scope: shared or private', 'shared')
+  .option('--force', 'Re-ingest even if already indexed')
+  .action((paths: string[], opts: { org?: string; agent?: string; scope?: string; force?: boolean }) => {
+    const env = resolveEnv();
+    const org = opts.org || env.org;
+    if (!org) {
+      console.error('ERROR: --org or CTX_ORG required');
+      process.exit(1);
+    }
+
+    ensureKBDirs(env.instanceId, org);
+
+    ingestKnowledgeBase(paths, {
+      org,
+      agent: opts.agent || env.agentName,
+      scope: (opts.scope as 'shared' | 'private') || 'shared',
+      force: opts.force,
+      frameworkRoot: env.frameworkRoot || process.cwd(),
+      instanceId: env.instanceId,
+    });
+  });
+
+busCommand
+  .command('kb-collections')
+  .description('List knowledge base collections and document counts')
+  .option('--org <org>', 'Organization name')
+  .action((opts: { org?: string }) => {
+    const env = resolveEnv();
+    const org = opts.org || env.org;
+    if (!org) {
+      console.error('ERROR: --org or CTX_ORG required');
+      process.exit(1);
+    }
+
+    const { execFileSync } = require('child_process');
+    const scriptPath = require('path').join(__dirname, '../../bus/kb-collections.sh');
+    const envVars = {
+      ...process.env,
+      CTX_ORG: org,
+      CTX_INSTANCE_ID: env.instanceId,
+      CTX_FRAMEWORK_ROOT: env.frameworkRoot || process.cwd(),
+    };
+    try {
+      execFileSync('bash', [scriptPath, '--org', org, '--instance', env.instanceId], {
+        stdio: 'inherit',
+        env: envVars,
+      });
+    } catch {
+      // script printed error already
+      process.exit(1);
+    }
+  });
+
+// ---------------------------------------------------------------------------
+// Hook subcommands — cross-platform replacements for hook-*.sh bash scripts
+// These are invoked by Claude Code settings.json hooks on all platforms.
+// ---------------------------------------------------------------------------
+
+function runHook(hookName: string): void {
+  const hookPath = join(__dirname, `../hooks/${hookName}.js`);
+  const result = spawnSync(process.execPath, [hookPath], { stdio: 'inherit' });
+  process.exit(result.status ?? 0);
+}
+
+busCommand
+  .command('hook-ask-telegram')
+  .description('PreToolUse hook: forward AskUserQuestion to Telegram (cross-platform)')
+  .action(() => runHook('hook-ask-telegram'));
+
+busCommand
+  .command('hook-permission-telegram')
+  .description('PermissionRequest hook: send approve/deny request to Telegram (cross-platform)')
+  .action(() => runHook('hook-permission-telegram'));
+
+busCommand
+  .command('hook-planmode-telegram')
+  .description('ExitPlanMode hook: send plan for review to Telegram (cross-platform)')
+  .action(() => runHook('hook-planmode-telegram'));
