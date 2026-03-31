@@ -37,8 +37,8 @@ describe('Sprint 1: Template Completeness', () => {
       expect(settings.hooks.SessionEnd).toBeDefined();
     });
 
-    it('has all 5 skills', () => {
-      const expectedSkills = ['autoresearch', 'comms', 'cron-management', 'google-workspace', 'tasks'];
+    it('has all 6 skills', () => {
+      const expectedSkills = ['autoresearch', 'comms', 'cron-management', 'google-workspace', 'tasks', 'onboarding'];
       for (const skill of expectedSkills) {
         const skillPath = join(agentDir, '.claude', 'skills', skill, 'SKILL.md');
         expect(existsSync(skillPath), `Missing skill: ${skill}`).toBe(true);
@@ -136,11 +136,11 @@ describe('Sprint 1: Template Completeness', () => {
       expect(cronNames).toContain('evening-review');
     });
 
-    it('has 11 skills including orchestrator-specific ones', () => {
+    it('has 12 skills including orchestrator-specific ones', () => {
       const expectedSkills = [
         'autoresearch', 'comms', 'cron-management', 'google-workspace', 'tasks',
         'evening-review', 'goal-management', 'morning-review',
-        'nighttime-mode', 'theta-wave', 'weekly-review',
+        'nighttime-mode', 'theta-wave', 'weekly-review', 'onboarding',
       ];
       for (const skill of expectedSkills) {
         const skillPath = join(orchDir, '.claude', 'skills', skill, 'SKILL.md');
@@ -205,11 +205,11 @@ describe('Sprint 1: Template Completeness', () => {
       expect(config.ecosystem.local_version_control).toBeDefined();
     });
 
-    it('has 10 skills including analyst-specific ones', () => {
+    it('has 11 skills including analyst-specific ones', () => {
       const expectedSkills = [
         'autoresearch', 'comms', 'cron-management', 'google-workspace', 'tasks',
         'catalog-browse', 'community-publish', 'local-version-control',
-        'theta-wave', 'upstream-sync',
+        'theta-wave', 'upstream-sync', 'onboarding',
       ];
       for (const skill of expectedSkills) {
         const skillPath = join(analystDir, '.claude', 'skills', skill, 'SKILL.md');

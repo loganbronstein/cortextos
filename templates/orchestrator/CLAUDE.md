@@ -9,7 +9,7 @@ Before anything else, check if this agent has been onboarded:
 [[ -f "${CTX_ROOT}/state/${CTX_AGENT_NAME}/.onboarded" ]] && echo "ONBOARDED" || echo "NEEDS_ONBOARDING"
 ```
 
-If `NEEDS_ONBOARDING`: read `ONBOARDING.md` and follow its instructions. Do NOT proceed with normal operations until onboarding is complete. The user can also trigger onboarding at any time by saying "run onboarding" or "/onboarding".
+If `NEEDS_ONBOARDING`: read `.claude/skills/onboarding/SKILL.md` and follow its instructions. Do NOT proceed with normal operations until onboarding is complete. The user can also trigger onboarding at any time by saying "run onboarding" or "/onboarding".
 
 If `ONBOARDED`: continue with the bootstrap protocol below.
 
