@@ -525,35 +525,11 @@ EOF
 
 ---
 
-## Phase 8f: Knowledge Base (RAG)
+## Phase 8f: Knowledge Base (Coming Soon)
 
-### What it is (verbatim)
+> "cortextOS will soon include a semantic knowledge base. Agents will be able to upload files from their workspace — documents, images, audio, video — into a shared searchable database. All agents can query it with natural language, and you can search everything from the web dashboard. This feature is coming in a future update."
 
-> "cortextOS has an optional semantic memory layer. Agents can query a ChromaDB knowledge base using natural language — great for large doc sets, research notes, or any content too big to fit in a prompt. It requires a Gemini API key for embeddings."
-
-Ask: "Do you want to set up the knowledge base? It requires a Google Gemini API key. (yes/no — can be added later)"
-
-If yes:
-
-1. "Paste your Gemini API key (starts with `AIza...`):"
-
-Write to `orgs/${ORG_NAME}/secrets.env`:
-```bash
-cat > "orgs/${ORG_NAME}/secrets.env" << EOF
-GEMINI_API_KEY=<their key>
-EOF
-chmod 600 "orgs/${ORG_NAME}/secrets.env"
-```
-
-2. Verify knowledge base directory structure:
-```bash
-node dist/cli.js bus kb-collections --org "${ORG_NAME}" 2>/dev/null && echo "KB ready" || echo "KB will initialize on first ingest"
-```
-
-The knowledge base initializes automatically on first use — no separate setup needed. Confirm:
-> "Knowledge base is ready. Your agents can use `cortextos bus kb-ingest <path>` to add documents and `cortextos bus kb-query '<question>'` to search them."
-
-If no: skip. Note that `GEMINI_API_KEY` can be added to `orgs/${ORG_NAME}/secrets.env` at any time to enable the knowledge base — agents will pick it up on next restart.
+Skip for now — no setup required.
 
 ---
 
@@ -578,7 +554,7 @@ cat "${CTX_ROOT}/logs/${ORCH_NAME}/activity.log" 2>/dev/null | tail -20
 
 ### 9b. First Telegram interaction (verbatim)
 
-> "Your Orchestrator is bootstrapping. As soon as it's ready — about 30-60 seconds — it will message you on Telegram to start the interactive setup."
+> "Your Orchestrator is bootstrapping. As soon as it's ready — about 30-60 seconds — it will message you on Telegram to start the interactive setup. As your first message, always type /onboarding"
 >
 > "Here's exactly what the Orchestrator will walk you through on Telegram:"
 > 1. Its name, personality, and vibe
@@ -589,7 +565,7 @@ cat "${CTX_ROOT}/logs/${ORCH_NAME}/activity.log" 2>/dev/null | tail -20
 > 6. Any tools or services it needs access to (GitHub, Google, etc.)
 > 7. Creating your Analyst agent (it will walk you through BotFather again for the Analyst's bot)
 >
-> "Once the Orchestrator finishes, your Analyst comes online and does its own onboarding — about 5-10 minutes. At the end the Analyst will recommend any specialist agents and ask if you want to create them. Each specialist takes 3-5 minutes to onboard."
+> "Once the Orchestrator finishes, it will spawn your Analyst.does its own onboarding — about 5-10 minutes. At the end the Analyst will recommend any specialist agents and ask if you want to create them. Each specialist takes 3-5 minutes to onboard."
 >
 > "Come back here if you hit any errors. Otherwise — you're done in Claude Code. Your Orchestrator has it from here."
 
