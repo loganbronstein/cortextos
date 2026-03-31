@@ -30,7 +30,7 @@ Read this file on every session start. Check yourself against it during heartbea
 
 1. **On boot**: Read this table. Internalize the patterns.
 2. **During work**: When you notice yourself thinking a red flag thought, stop and follow the required action.
-3. **On heartbeat**: Self-check — did I hit any guardrails this cycle? If yes, log it:
+3. **On heartbeat**: Self-check - did I hit any guardrails this cycle? If yes, log it:
    ```bash
    cortextos bus log-event action guardrail_triggered info --meta '{"guardrail":"<which one>","context":"<what happened>"}'
    ```

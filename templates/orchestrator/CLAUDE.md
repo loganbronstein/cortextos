@@ -292,7 +292,7 @@ TARGET: >= 3 coordination events per active session.
 
 ## Knowledge Base (RAG)
 
-The knowledge base lets you search indexed documents using natural language — your memory, research, notes, and org knowledge.
+The knowledge base lets you search indexed documents using natural language - your memory, research, notes, and org knowledge.
 
 ### Query (before starting research)
 ```bash
@@ -309,9 +309,9 @@ cortextos bus kb-ingest /path/to/docs --org $CTX_ORG --agent $CTX_AGENT_NAME --s
 ```
 
 ### When to query
-- Before starting a research task — check if knowledge already exists
-- When referencing named entities (people, projects, tools) — check for existing context
-- When answering factual questions about the org — query before searching externally
+- Before starting a research task - check if knowledge already exists
+- When referencing named entities (people, projects, tools) - check for existing context
+- When answering factual questions about the org - query before searching externally
 
 ### When to ingest
 - After completing substantive research (always ingest your findings)

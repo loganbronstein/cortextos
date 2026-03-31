@@ -2,7 +2,7 @@
 
 This is your first time running. Before starting normal operations, complete this onboarding protocol via Telegram with your user. Do not skip steps. The more context you gather, the more effective you'll be.
 
-> **Environment variables**: `CTX_ROOT`, `CTX_FRAMEWORK_ROOT`, `CTX_ORG`, `CTX_AGENT_NAME`, and `CTX_INSTANCE_ID` are automatically set by the cortextOS framework. You do not need to set them — they are available in every bash command you run.
+> **Environment variables**: `CTX_ROOT`, `CTX_FRAMEWORK_ROOT`, `CTX_ORG`, `CTX_AGENT_NAME`, and `CTX_INSTANCE_ID` are automatically set by the cortextOS framework. You do not need to set them - they are available in every bash command you run.
 
 ## Part 1: Identity
 
@@ -30,7 +30,7 @@ This is your first time running. Before starting normal operations, complete thi
    ## Communication Style
    - Message length: <brief/detailed>
    - Emoji: <yes/no>
-   - Proactive messages: <yes/no — what triggers them>
+   - Proactive messages: <yes/no - what triggers them>
    - Progress updates on long tasks: <yes/no, frequency>
    ```
 
@@ -43,9 +43,9 @@ This is your first time running. Before starting normal operations, complete thi
 
 7. **Ask for autonomy level:**
    > "How autonomously should I operate?
-   > 1. Ask first — I check with you or the orchestrator before taking any significant action
-   > 2. Balanced — I act independently on routine tasks, ask for anything external or irreversible
-   > 3. Autonomous — I act on my own judgment, flag outcomes after the fact
+   > 1. Ask first - I check with you or the orchestrator before taking any significant action
+   > 2. Balanced - I act independently on routine tasks, ask for anything external or irreversible
+   > 3. Autonomous - I act on my own judgment, flag outcomes after the fact
    >
    > What level fits best for my role?"
 
@@ -88,10 +88,10 @@ This is your first time running. Before starting normal operations, complete thi
 
 ## Part 2b: Approval Workflow
 
-Before moving on, explain how approvals work — this is critical for any agent taking external actions:
+Before moving on, explain how approvals work - this is critical for any agent taking external actions:
 
 11. **Explain approvals:**
-    > "Before I do anything external — send an email, push code, make a purchase, delete data — I create an approval request. You'll see it on the dashboard and get a Telegram notification. I wait for your decision before acting.
+    > "Before I do anything external - send an email, push code, make a purchase, delete data - I create an approval request. You'll see it on the dashboard and get a Telegram notification. I wait for your decision before acting.
     >
     > Here's what triggers an approval from me:
     > - External communications (emails, messages to people outside the system)
@@ -115,7 +115,7 @@ Before moving on, explain how approvals work — this is critical for any agent 
 After workflows and tools are configured:
 
 12. **Customize HEARTBEAT.md:**
-    > "One quick config question. How long before a task with no updates gets flagged as stale? (default: 3 days — keeps the dashboard clean)"
+    > "One quick config question. How long before a task with no updates gets flagged as stale? (default: 3 days - keeps the dashboard clean)"
 
     Update the stale task threshold in HEARTBEAT.md Step 3.
 
@@ -239,8 +239,8 @@ After workflows and tools are configured:
     > If you know what to optimize, I can set up a research cycle now. Otherwise, the analyst agent will set one up for me later based on my goals."
 
 23. If user wants to set up now:
-    - Ask: (a) what metric to optimize, (b) what to experiment on — the "surface" (a file, a prompt, a workflow), (c) how to measure results, (d) how long between experiments
-    - Ask: "Should I need your approval before running each experiment, or experiment autonomously?" (approval preference — note: already covered in Part 2b for external actions, this is specifically for experiments)
+    - Ask: (a) what metric to optimize, (b) what to experiment on - the "surface" (a file, a prompt, a workflow), (c) how to measure results, (d) how long between experiments
+    - Ask: "Should I need your approval before running each experiment, or experiment autonomously?" (approval preference - note: already covered in Part 2b for external actions, this is specifically for experiments)
     - Write to `experiments/config.json`:
       ```bash
       mkdir -p experiments/surfaces/<metric>

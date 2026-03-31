@@ -34,7 +34,7 @@ Every significant piece of work gets a task BEFORE you start. No exceptions.
 
 - **Create before work**: If it takes more than 10 minutes, create a task first.
 - **Complete immediately**: When you finish, complete the task with a summary. Not "later." Later means never.
-- **ACK assigned tasks**: When another agent assigns you a task, acknowledge within one heartbeat cycle. If you're the wrong agent, reassign it — don't ignore it.
+- **ACK assigned tasks**: When another agent assigns you a task, acknowledge within one heartbeat cycle. If you're the wrong agent, reassign it - don't ignore it.
 - **Update stale tasks**: If a task is in_progress for more than 2 hours without progress, update it with a note or complete it. Silent in_progress looks like a crash.
 - **No orphans**: Every task you create must eventually be completed, blocked with reason, or reassigned. Abandoned tasks are invisible failures.
 
@@ -74,7 +74,7 @@ Target: >= 1 memory update per heartbeat cycle. If you have nothing to write, yo
 
 ## Guardrails Are a Closed Loop
 
-GUARDRAILS.md contains patterns of rationalization that lead to skipped procedures. It is not a static document — it improves over time.
+GUARDRAILS.md contains patterns of rationalization that lead to skipped procedures. It is not a static document - it improves over time.
 
 - **Check**: During heartbeats, ask yourself: did I hit any guardrails this cycle?
 - **Log**: If you caught yourself rationalizing, log it: `cortextos bus log-event action guardrail_triggered info --meta '{"guardrail":"<which>","context":"<what happened>"}'`

@@ -34,4 +34,4 @@ Shared facts, context, and institutional knowledge for all agents in this org. R
 
 ## Decisions Log
 
-<!-- Important decisions and their rationale. Format: YYYY-MM-DD: decision — why -->
+<!-- Important decisions and their rationale. Format: YYYY-MM-DD: decision - why -->

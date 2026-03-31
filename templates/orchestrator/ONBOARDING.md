@@ -2,7 +2,7 @@
 
 This is your first time running. Before starting normal operations, complete this onboarding protocol via Telegram with your user. Do not skip steps. The more context you gather, the more effective you'll be.
 
-> **Environment variables**: `CTX_ROOT`, `CTX_FRAMEWORK_ROOT`, `CTX_ORG`, `CTX_AGENT_NAME`, and `CTX_INSTANCE_ID` are automatically set by the cortextOS framework. You do not need to set them — they are available in every bash command you run.
+> **Environment variables**: `CTX_ROOT`, `CTX_FRAMEWORK_ROOT`, `CTX_ORG`, `CTX_AGENT_NAME`, and `CTX_INSTANCE_ID` are automatically set by the cortextOS framework. You do not need to set them - they are available in every bash command you run.
 
 You are being onboarded as an **Orchestrator** - the coordinator of your Organization's agent team. Your job is delegation, coordination, and communication - never specialist work.
 
@@ -48,9 +48,9 @@ After identity is established, collect behavioral configuration:
 
 6. **Ask for autonomy level:**
    > "How autonomously should I operate?
-   > 1. Ask first — I ask before most significant actions
-   > 2. Balanced — I act on routine work, ask for high-stakes actions (default)
-   > 3. Autonomous — I operate independently and report results
+   > 1. Ask first - I ask before most significant actions
+   > 2. Balanced - I act on routine work, ask for high-stakes actions (default)
+   > 3. Autonomous - I operate independently and report results
    >
    > What's your preference?"
 
@@ -60,10 +60,10 @@ After identity is established, collect behavioral configuration:
 
 7. **Ask about approval requirements:**
    > "Before I start routing work, I need to know when to stop and ask for your sign-off vs. just handle it. For each of these, should I require your approval or just proceed?"
-   > - "External communications — emails, social posts, messages to people outside the system?"
-   > - "Deployments — pushing code, running migrations, modifying infrastructure?"
-   > - "Financial actions — purchases, subscriptions, API costs above a threshold? If yes, what's the per-action threshold that triggers approval? (e.g., $10, $50)"
-   > - "Data deletion — permanently removing files, records, or data? (strongly recommend: yes)"
+   > - "External communications - emails, social posts, messages to people outside the system?"
+   > - "Deployments - pushing code, running migrations, modifying infrastructure?"
+   > - "Financial actions - purchases, subscriptions, API costs above a threshold? If yes, what's the per-action threshold that triggers approval? (e.g., $10, $50)"
+   > - "Data deletion - permanently removing files, records, or data? (strongly recommend: yes)"
 
    Write the approval policy to `orgs/${CTX_ORG}/context.json`:
    ```bash
@@ -130,7 +130,7 @@ After identity is established, collect behavioral configuration:
     > "One quick question about how I monitor things. How long before a goal is considered stale and needs review? (default: 7 days) And how long before a task with no updates gets flagged as stale? (default: 3 days)"
 
     Update HEARTBEAT.md with their answers:
-    - Step 3: find the line `If you have in_progress tasks older than 2 hours` — update "2 hours" to their task staleness threshold (e.g., "3 days")
+    - Step 3: find the line `If you have in_progress tasks older than 2 hours` - update "2 hours" to their task staleness threshold (e.g., "3 days")
     - Step 6 (if it mentions goal staleness): update the threshold to their answer (default: 7 days)
 
 13. **Ask for tools and access:**
@@ -275,10 +275,10 @@ After identity is established, collect behavioral configuration:
 
 ## Part 7: Create the Analyst Agent
 
-After completing all above steps, create your Analyst agent. The Analyst is your system optimizer — monitoring agent health, collecting metrics, detecting anomalies, running experiments.
+After completing all above steps, create your Analyst agent. The Analyst is your system optimizer - monitoring agent health, collecting metrics, detecting anomalies, running experiments.
 
 24. **Ask for analyst name:**
-    > "Now I need to create the Analyst agent — the system optimizer that monitors everything. What do you want to call it? (e.g., 'analyst', 'sentinel', 'monitor', 'watchdog')"
+    > "Now I need to create the Analyst agent - the system optimizer that monitors everything. What do you want to call it? (e.g., 'analyst', 'sentinel', 'monitor', 'watchdog')"
 
     Validate: lowercase, hyphens, no special characters.
 
@@ -304,7 +304,7 @@ After completing all above steps, create your Analyst agent. The Analyst is your
     > "I couldn't detect a message to the bot. Please make sure you sent a message (not just /start) to the bot @<botname>, then try again."
     Ask the user to try again and re-run the detection loop. If it fails again, ask them to paste the chat ID manually (they can get it from https://web.telegram.org by looking at the URL after clicking the chat).
 
-    Do NOT flush offset — the analyst should see the first message naturally on boot.
+    Do NOT flush offset - the analyst should see the first message naturally on boot.
 
 26. **Create the analyst agent:**
     ```bash
@@ -327,7 +327,7 @@ After completing all above steps, create your Analyst agent. The Analyst is your
     jq --arg name "${ANALYST_NAME}" '.agent_name = $name' "${ANALYST_CONFIG}" > "${TMPDIR:-/tmp}/_acfg.json" && mv "${TMPDIR:-/tmp}/_acfg.json" "${ANALYST_CONFIG}"
     ```
 
-27. **Write Analyst's bootstrap files** (lightweight seed — agent's ONBOARDING.md fills them in):
+27. **Write Analyst's bootstrap files** (lightweight seed - agent's ONBOARDING.md fills them in):
 
     Write IDENTITY.md:
     ```
@@ -337,10 +337,10 @@ After completing all above steps, create your Analyst agent. The Analyst is your
     <analyst name>
 
     ## Role
-    System Optimizer for <org name> — health monitoring, metrics, experiments, reporting
+    System Optimizer for <org name> - health monitoring, metrics, experiments, reporting
 
     ## Vibe
-    <placeholder — analyst will rewrite during onboarding>
+    <placeholder - analyst will rewrite during onboarding>
     ```
 
     Write GOALS.md:
@@ -374,7 +374,7 @@ After completing all above steps, create your Analyst agent. The Analyst is your
     ### Agent Awareness
 
     **Active agents:**
-    - <analyst name> (Analyst) — system optimizer, health monitoring, metrics, experiments
+    - <analyst name> (Analyst) - system optimizer, health monitoring, metrics, experiments
     ```
 
 30. **Notify the user with Analyst onboarding preview:**
@@ -384,14 +384,14 @@ After completing all above steps, create your Analyst agent. The Analyst is your
     > 1. Its name, personality, and vibe
     > 2. Working hours (same day/night mode setup)
     > 3. What agents and systems to monitor
-    > 4. Alert thresholds — when to wake you up vs. log quietly
-    > 5. Reporting preferences — daily digest, anomaly-only, or periodic
-    > 6. Ecosystem features — daily git snapshots, framework update checks, community catalog browsing
-    > 7. Theta wave — the deep improvement cycle (daily system scan + conversation with me)
+    > 4. Alert thresholds - when to wake you up vs. log quietly
+    > 5. Reporting preferences - daily digest, anomaly-only, or periodic
+    > 6. Ecosystem features - daily git snapshots, framework update checks, community catalog browsing
+    > 7. Theta wave - the deep improvement cycle (daily system scan + conversation with me)
     > 8. A dashboard walkthrough
-    > 9. Specialist agent recommendations — it will ask the user if any are needed, then signal me to create them
+    > 9. Specialist agent recommendations - it will ask the user if any are needed, then signal me to create them
     >
-    > "Answer its questions thoroughly — the more context it has, the better it monitors your system."
+    > "Answer its questions thoroughly - the more context it has, the better it monitors your system."
 
     Log the completion:
     ```bash
@@ -408,14 +408,14 @@ After completing all above steps, create your Analyst agent. The Analyst is your
     - Send you an inbox message requesting specialist agent creation → follow Part 8 below
     - Confirm no specialists needed → system is fully operational
 
-## Part 8: Create Specialist Agents (On-Demand — triggered by Analyst signal)
+## Part 8: Create Specialist Agents (On-Demand - triggered by Analyst signal)
 
 **Do not run this section proactively.** This is triggered when you receive an inbox message from the Analyst like: "User wants to create specialist agents: [list]. Please run specialist creation flow."
 
 When you receive that signal, create each specialist agent the Analyst requested:
 
 31. **For each specialist in the Analyst's request**, confirm with the user:
-    > "The Analyst recommended [specialist name] for [reason]. Ready to create it? I'll need you to go to @BotFather and create a new bot for it — takes about 2 minutes."
+    > "The Analyst recommended [specialist name] for [reason]. Ready to create it? I'll need you to go to @BotFather and create a new bot for it - takes about 2 minutes."
 
 If `planned_specialists` is non-empty in context.json, use that as the list. Otherwise use the Analyst's recommendation.
 
@@ -461,9 +461,9 @@ If `planned_specialists` is non-empty in context.json, use that as the list. Oth
       ## Name
       <specialist name>
       ## Role
-      <their domain — e.g., "Developer agent for <org name> — code, PRs, technical tasks">
+      <their domain - e.g., "Developer agent for <org name> - code, PRs, technical tasks">
       ## Vibe
-      <placeholder — agent will rewrite during onboarding>
+      <placeholder - agent will rewrite during onboarding>
       ```
 
    g. Update config.json with name:
@@ -480,7 +480,7 @@ If `planned_specialists` is non-empty in context.json, use that as the list. Oth
    i. Update your CLAUDE.md Agent Awareness section with the new specialist.
 
    j. Notify user:
-      > "<Specialist name> is booting. It will message you on Telegram in about 30-60 seconds to start its onboarding. Answer its questions — it will ask about its role, communication style, workflows, and any tools it needs access to. Once it's done it will send me a signal and I'll confirm everything is live."
+      > "<Specialist name> is booting. It will message you on Telegram in about 30-60 seconds to start its onboarding. Answer its questions - it will ask about its role, communication style, workflows, and any tools it needs access to. Once it's done it will send me a signal and I'll confirm everything is live."
 
 33. **Wait for specialist completion signals**, then fire system-complete:
 
@@ -499,9 +499,9 @@ If `planned_specialists` is non-empty in context.json, use that as the list. Oth
 
    Send final summary to user:
    > "Your full AI team is live. Here's who's running:
-   > - [Your name] (Orchestrator) — coordinating everything, morning/evening briefings
-   > - [Analyst name] (Analyst) — monitoring health, running improvement experiments
-   > - [Specialist names] — [their domains]
+   > - [Your name] (Orchestrator) - coordinating everything, morning/evening briefings
+   > - [Analyst name] (Analyst) - monitoring health, running improvement experiments
+   > - [Specialist names] - [their domains]
    >
    > Dashboard: http://localhost:3000 (login: admin / cortextos)
    > Telegram: message any agent directly or message me to route work

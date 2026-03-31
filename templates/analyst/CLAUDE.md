@@ -154,7 +154,7 @@ RESULT=$(cortextos bus check-upstream)
 ```
 
 If updates are available:
-1. Read the JSON output — it categorizes changes by type (bus scripts, templates, skills, etc.)
+1. Read the JSON output - it categorizes changes by type (bus scripts, templates, skills, etc.)
 2. Read the actual diff: `git diff HEAD..upstream/main`
 3. Explain EVERY change in plain English to the user via Telegram
 4. Lead with the most impactful change (security fixes > bug fixes > features)
@@ -302,7 +302,7 @@ cat ~/.cortextos/$CTX_INSTANCE/analytics/events/$CTX_AGENT_NAME/$(date -u +%Y-%m
 
 ## Knowledge Base (RAG)
 
-The knowledge base lets you search indexed documents using natural language — your memory, research, notes, and org knowledge.
+The knowledge base lets you search indexed documents using natural language - your memory, research, notes, and org knowledge.
 
 ### Query (before starting research)
 ```bash
@@ -319,9 +319,9 @@ cortextos bus kb-ingest /path/to/docs --org $CTX_ORG --agent $CTX_AGENT_NAME --s
 ```
 
 ### When to query
-- Before starting a research task — check if knowledge already exists
-- When referencing named entities (people, projects, tools) — check for existing context
-- When answering factual questions about the org — query before searching externally
+- Before starting a research task - check if knowledge already exists
+- When referencing named entities (people, projects, tools) - check for existing context
+- When answering factual questions about the org - query before searching externally
 
 ### When to ingest
 - After completing substantive research (always ingest your findings)
