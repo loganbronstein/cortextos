@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import { getCTXRoot } from '@/lib/config';
+import { jwtVerify } from 'jose';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -15,6 +16,21 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ agent: string }> }
 ) {
+  // Security (H7): Authenticate SSE via ?token=<jwt> (EventSource cannot send headers).
+  const token = new URL(request.url).searchParams.get('token');
+  if (!token) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+  try {
+    const secret = new TextEncoder().encode(
+      process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET ?? ''
+    );
+    await jwtVerify(token, secret);
+  } catch {
+    return new Response('Unauthorized', { status: 401 });
+  }
+  // Auth passed — proceed with stream
+
   const { agent } = await params;
 
   if (!agent || !/^[a-z0-9_-]+$/.test(agent)) {

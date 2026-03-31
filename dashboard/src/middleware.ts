@@ -5,8 +5,9 @@
 
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { jwtVerify } from 'jose';
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Handle CORS preflight requests
@@ -23,11 +24,10 @@ export function middleware(request: NextRequest) {
   }
 
   // Allow public paths
+  // Security (H7): SSE endpoints require ?token=<jwt> auth — removed from public whitelist
   if (
     pathname.startsWith('/login') ||
     pathname.startsWith('/api/auth') ||
-    pathname.startsWith('/api/events/stream') ||
-    pathname.startsWith('/api/messages/stream') ||
     pathname.startsWith('/_next') ||
     pathname === '/favicon.ico'
   ) {
@@ -43,7 +43,24 @@ export function middleware(request: NextRequest) {
 
   // Check for Bearer token (mobile app)
   const authHeader = request.headers.get('Authorization');
-  const hasBearerToken = authHeader?.startsWith('Bearer ') && authHeader.length > 7;
+  let hasBearerToken = false;
+
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7);
+    if (token.length > 0) {
+      try {
+        // Security (H6): Verify JWT signature — presence-only check bypassed by any string.
+        const authSecret = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
+        if (authSecret) {
+          const secret = new TextEncoder().encode(authSecret);
+          await jwtVerify(token, secret);
+          hasBearerToken = true;
+        }
+      } catch {
+        hasBearerToken = false;
+      }
+    }
+  }
 
   if (!hasSession && !hasBearerToken) {
     // For API routes, return 401 instead of redirect

@@ -92,6 +92,11 @@ export async function PATCH(
     );
   }
 
+  // Security: Strip null bytes and control characters from note.
+  const sanitizedNote = note
+    ? String(note).replace(/[\x00-\x1F\x7F]/g, '').slice(0, 500)
+    : undefined;
+
   // Look up the approval's org to pass CTX_ORG to bus script
   const approval = getApprovalById(id);
   if (!approval) {
@@ -108,7 +113,7 @@ export async function PATCH(
   };
 
   const args = [shellEscape(id), decision];
-  if (note) args.push(shellEscape(String(note)));
+  if (sanitizedNote) args.push(shellEscape(sanitizedNote));
 
   try {
     execSync(

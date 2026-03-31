@@ -74,7 +74,16 @@ export async function seedAdminUser(): Promise<void> {
   if (row.count > 0) return;
 
   const username = process.env.ADMIN_USERNAME ?? 'admin';
-  const password = process.env.ADMIN_PASSWORD ?? 'cortextos';
+
+  // Security (H8): Do not fall back to hardcoded password.
+  const password = process.env.ADMIN_PASSWORD;
+  if (!password) {
+    throw new Error('ADMIN_PASSWORD environment variable is required but not set.');
+  }
+  const KNOWN_DEFAULTS = ['cortextos', 'password', 'admin', 'changeme'];
+  if (process.env.NODE_ENV === 'production' && KNOWN_DEFAULTS.includes(password)) {
+    throw new Error('ADMIN_PASSWORD is a known default. Set a strong password in .env.local');
+  }
 
   const hash = await bcrypt.hash(password, 12);
   db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(
@@ -83,9 +92,4 @@ export async function seedAdminUser(): Promise<void> {
   );
 
   console.log(`[auth] Seeded admin user: ${username}`);
-  if (!process.env.ADMIN_PASSWORD) {
-    console.warn(
-      '[auth] Using default password "cortextos". Set ADMIN_PASSWORD env var for production.'
-    );
-  }
 }

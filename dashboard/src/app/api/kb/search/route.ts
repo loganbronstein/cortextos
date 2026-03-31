@@ -29,9 +29,21 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
 
-  const q = searchParams.get('q');
-  const org = searchParams.get('org') || '';
-  const agent = searchParams.get('agent') || '';
+  const org = searchParams.get('org') ?? '';
+  const agent = searchParams.get('agent') ?? '';
+  const q = searchParams.get('q') ?? '';
+
+  // Security (H12): Validate org/agent against allowlist before shell use.
+  if (org && !/^[a-z0-9_-]+$/.test(org)) {
+    return Response.json({ error: 'Invalid org' }, { status: 400 });
+  }
+  if (agent && !/^[a-z0-9_-]+$/.test(agent)) {
+    return Response.json({ error: 'Invalid agent' }, { status: 400 });
+  }
+  if (q.length > 500) {
+    return Response.json({ error: 'Query too long' }, { status: 400 });
+  }
+
   const scope = searchParams.get('scope') || 'all';
   const limit = parseInt(searchParams.get('limit') || '10', 10);
   const threshold = parseFloat(searchParams.get('threshold') || '0.5');

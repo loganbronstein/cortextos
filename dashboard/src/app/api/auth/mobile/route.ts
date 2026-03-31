@@ -3,10 +3,9 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { db } from '@/lib/db';
 import type { User } from '@/lib/types';
+import { checkRateLimit, resetRateLimit } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
-
-const JWT_SECRET = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET || 'cortextos-mobile-jwt-secret';
 
 /**
  * POST /api/auth/mobile - Mobile-friendly auth that returns JWT in response body
@@ -15,6 +14,19 @@ const JWT_SECRET = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET || 'co
  * Returns: { token: string, user: { id: string, name: string } }
  */
 export async function POST(request: NextRequest) {
+  // Security (H11): Rate limit auth attempts per IP.
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
+  const { allowed, retryAfter } = checkRateLimit(ip);
+  if (!allowed) {
+    return Response.json({ error: 'Too many attempts' }, { status: 429, headers: { 'Retry-After': String(retryAfter) } } as any);
+  }
+
+  // Security (H8/H13): No hardcoded JWT secret fallback.
+  const JWT_SECRET = process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET;
+  if (!JWT_SECRET) {
+    return Response.json({ error: 'Server configuration error' }, { status: 500 });
+  }
+
   let body: Record<string, unknown>;
   try {
     body = await request.json();
@@ -41,6 +53,9 @@ export async function POST(request: NextRequest) {
     if (!valid) {
       return Response.json({ error: 'Invalid credentials' }, { status: 401 });
     }
+
+    // Auth successful — reset rate limit counter
+    resetRateLimit(ip);
 
     // Generate JWT
     const token = jwt.sign(

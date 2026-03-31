@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { getTaskById } from '@/lib/data/tasks';
 import { getFrameworkRoot, getCTXRoot } from '@/lib/config';
 import { syncAll } from '@/lib/sync';
@@ -156,9 +156,15 @@ export async function PUT(
     // Notify new assignee if changed
     if (assignee && assignee !== oldAssignee && assignee !== 'human' && assignee !== 'user') {
       try {
-        const { execSync } = await import('child_process');
-        execSync(
-          `bash "${getFrameworkRoot()}/bus/send-message.sh" "${assignee}" normal 'Task reassigned to you: [${id}] ${taskData.title}'`,
+        // Security (H9): Use execFileSync array args — no shell, no string expansion.
+        execFileSync(
+          'bash',
+          [
+            `${getFrameworkRoot()}/bus/send-message.sh`,
+            assignee,
+            'normal',
+            `Task reassigned to you: [${id}] ${taskData.title}`,
+          ],
           { timeout: 5000, stdio: 'pipe', env: { ...process.env, CTX_FRAMEWORK_ROOT: getFrameworkRoot(), CTX_ROOT: getCTXRoot(), CTX_AGENT_NAME: 'dashboard', CTX_ORG: task?.org || '' } }
         );
       } catch { /* non-fatal */ }
