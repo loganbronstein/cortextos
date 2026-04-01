@@ -45,6 +45,16 @@ describe('Sprint 1: Template Completeness', () => {
       }
     });
 
+    it('has goals.json with correct schema', () => {
+      const goals = JSON.parse(readFileSync(join(agentDir, 'goals.json'), 'utf-8'));
+      expect(goals).toHaveProperty('focus');
+      expect(goals).toHaveProperty('goals');
+      expect(goals).toHaveProperty('bottleneck');
+      expect(goals).toHaveProperty('updated_at');
+      expect(goals).toHaveProperty('updated_by');
+      expect(Array.isArray(goals.goals)).toBe(true);
+    });
+
     it('CLAUDE.md has first boot check', () => {
       const content = readFileSync(join(agentDir, 'CLAUDE.md'), 'utf-8');
       expect(content).toContain('First Boot Check');
@@ -126,6 +136,16 @@ describe('Sprint 1: Template Completeness', () => {
       }
     });
 
+    it('has goals.json with correct schema', () => {
+      const goals = JSON.parse(readFileSync(join(orchDir, 'goals.json'), 'utf-8'));
+      expect(goals).toHaveProperty('focus');
+      expect(goals).toHaveProperty('goals');
+      expect(goals).toHaveProperty('bottleneck');
+      expect(goals).toHaveProperty('updated_at');
+      expect(goals).toHaveProperty('updated_by');
+      expect(Array.isArray(goals.goals)).toBe(true);
+    });
+
     it('has config.json with 4 orchestrator crons', () => {
       const config = JSON.parse(readFileSync(join(orchDir, 'config.json'), 'utf-8'));
       expect(config.crons.length).toBe(4);
@@ -190,6 +210,16 @@ describe('Sprint 1: Template Completeness', () => {
       for (const file of requiredFiles) {
         expect(existsSync(join(analystDir, file)), `Missing ${file}`).toBe(true);
       }
+    });
+
+    it('has goals.json with correct schema', () => {
+      const goals = JSON.parse(readFileSync(join(analystDir, 'goals.json'), 'utf-8'));
+      expect(goals).toHaveProperty('focus');
+      expect(goals).toHaveProperty('goals');
+      expect(goals).toHaveProperty('bottleneck');
+      expect(goals).toHaveProperty('updated_at');
+      expect(goals).toHaveProperty('updated_by');
+      expect(Array.isArray(goals.goals)).toBe(true);
     });
 
     it('has config.json with 5 analyst crons + ecosystem config', () => {
