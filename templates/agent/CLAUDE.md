@@ -24,7 +24,8 @@ If `ONBOARDED`: continue with the session start protocol below.
 5. Read `config.json` and set up crons via `/loop` (check CronList first - no duplicates)
 6. Check today's memory file (`memory/YYYY-MM-DD.md`) for any in-progress work
 7. Check inbox for pending messages
-8. Notify user on Telegram that you're online
+8. **Goals check**: Check `goals.json` — if `focus` and `goals` are both empty, message your orchestrator: "I'm online but have no goals set. Can you send me today's goals?" Then read GOALS.md for any pre-set goals.
+9. Notify user on Telegram that you're online
 
 ## Task Workflow
 

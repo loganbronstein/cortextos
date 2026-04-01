@@ -24,6 +24,13 @@ interface OrgConfig {
   default_approval_categories?: string[];
 }
 
+interface OrgGoals {
+  north_star: string;
+  daily_focus: string;
+  bottleneck: string;
+  updated_at: string;
+}
+
 const APPROVAL_CATEGORIES = ['external-comms', 'financial', 'deployment', 'data-deletion'] as const;
 
 export function OrganizationTab() {
@@ -33,6 +40,11 @@ export function OrganizationTab() {
 
   // Operational config state
   const [opConfig, setOpConfig] = useState<OrgConfig>({});
+
+  // Goals state
+  const [goals, setGoals] = useState<OrgGoals>({ north_star: '', daily_focus: '', bottleneck: '', updated_at: '' });
+  const [goalsSaving, setGoalsSaving] = useState(false);
+  const [goalsMessage, setGoalsMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [opLoading, setOpLoading] = useState(false);
   const [opSaving, setOpSaving] = useState(false);
   const [opMessage, setOpMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -79,6 +91,22 @@ export function OrganizationTab() {
       .catch(() => setOpLoading(false));
   }, [org]);
 
+  // Load org goals once org is known
+  useEffect(() => {
+    if (!org) return;
+    fetch(`/api/goals?org=${encodeURIComponent(org)}`)
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then(d => {
+        setGoals({
+          north_star: d.north_star || '',
+          daily_focus: d.daily_focus || '',
+          bottleneck: d.bottleneck || '',
+          updated_at: d.updated_at || '',
+        });
+      })
+      .catch(() => {});
+  }, [org]);
+
   const saveOpConfig = async () => {
     if (!org) return;
     const timeRegex = /^\d{2}:\d{2}$/;
@@ -108,6 +136,34 @@ export function OrganizationTab() {
       setOpMessage({ type: 'error', text: 'Network error' });
     } finally {
       setOpSaving(false);
+    }
+  };
+
+  const saveGoals = async () => {
+    if (!org) return;
+    setGoalsSaving(true);
+    setGoalsMessage(null);
+    try {
+      const res = await fetch(`/api/goals?org=${encodeURIComponent(org)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          north_star: goals.north_star,
+          daily_focus: goals.daily_focus,
+          bottleneck: goals.bottleneck,
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) {
+        setGoalsMessage({ type: 'error', text: d.error || 'Failed to save' });
+      } else {
+        setGoals(p => ({ ...p, updated_at: d.updated_at || '' }));
+        setGoalsMessage({ type: 'success', text: 'Goals saved.' });
+      }
+    } catch {
+      setGoalsMessage({ type: 'error', text: 'Network error' });
+    } finally {
+      setGoalsSaving(false);
     }
   };
 
@@ -170,6 +226,63 @@ export function OrganizationTab() {
             <pre className="text-sm whitespace-pre-wrap font-sans text-muted-foreground">
               {data.brandVoice}
             </pre>
+          </CardContent>
+        </Card>
+      )}
+
+      {org && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Goals</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <Label className="text-xs text-muted-foreground">North Star</Label>
+              <textarea
+                value={goals.north_star}
+                onChange={e => setGoals(p => ({ ...p, north_star: e.target.value }))}
+                placeholder="The long-term strategic direction that rarely changes"
+                rows={2}
+                className="mt-1 block w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none resize-y"
+              />
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Daily Focus</Label>
+              <input
+                type="text"
+                value={goals.daily_focus}
+                onChange={e => setGoals(p => ({ ...p, daily_focus: e.target.value }))}
+                placeholder="What the whole org is focused on today"
+                className="mt-1 block w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
+              />
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Current Bottleneck</Label>
+              <input
+                type="text"
+                value={goals.bottleneck}
+                onChange={e => setGoals(p => ({ ...p, bottleneck: e.target.value }))}
+                placeholder="The ONE thing blocking progress right now"
+                className="mt-1 block w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:border-primary focus:outline-none"
+              />
+            </div>
+            {goals.updated_at && (
+              <p className="text-xs text-muted-foreground italic">
+                Last updated {new Date(goals.updated_at).toLocaleString()}
+              </p>
+            )}
+            {goalsMessage && (
+              <div className={`rounded-md px-3 py-2 text-xs ${goalsMessage.type === 'success' ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-500'}`}>
+                {goalsMessage.text}
+              </div>
+            )}
+            <button
+              onClick={saveGoals}
+              disabled={goalsSaving}
+              className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {goalsSaving ? 'Saving...' : 'Save Goals'}
+            </button>
           </CardContent>
         </Card>
       )}

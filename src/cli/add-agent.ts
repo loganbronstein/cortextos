@@ -60,6 +60,18 @@ export const addAgentCommand = new Command('add-agent')
       console.log('  Created minimal agent files');
     }
 
+    // Create goals.json (empty — orchestrator will populate on morning cascade)
+    const goalsJsonPath = join(agentDir, 'goals.json');
+    if (!existsSync(goalsJsonPath)) {
+      writeFileSync(goalsJsonPath, JSON.stringify({
+        focus: '',
+        goals: [],
+        bottleneck: '',
+        updated_at: '',
+        updated_by: '',
+      }, null, 2) + '\n', 'utf-8');
+    }
+
     // Create config.json
     const configPath = join(agentDir, 'config.json');
     if (!existsSync(configPath)) {

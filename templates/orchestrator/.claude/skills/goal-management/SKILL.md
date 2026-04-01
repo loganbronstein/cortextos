@@ -11,77 +11,113 @@ The orchestrator owns the daily goal lifecycle. Goals flow from the human's dail
 ## Hierarchy
 
 ```
-North Star (org-level, rarely changes, set by human)
-  -> Daily Focus (what the human wants done TODAY)
-    -> Agent Goals (orchestrator translates focus into role-specific goals)
-      -> Tasks (agents create from their goals, confirm with orchestrator)
+North Star (org-level, rarely changes, set by human via dashboard or Telegram)
+  -> Daily Focus (what the human wants done TODAY — set each morning)
+    -> Agent goals.json (orchestrator writes role-specific goals for each agent)
+      -> GOALS.md (auto-generated from goals.json — agents read this on boot)
+        -> Tasks (agents create from their goals, confirm with orchestrator)
 ```
 
 ## Morning Goal Cascade
 
 Run this every morning as part of your briefing:
 
-### 1. Consult the human
+### 1. Read current org goals
+
+```bash
+cat $CTX_FRAMEWORK_ROOT/orgs/$CTX_ORG/goals.json
+```
+
+### 2. Consult the human
 
 Ask via Telegram:
-> "Good morning. Your north star is: [read from goals.json]. What's the focus for today?"
+> "Good morning. Our north star is: [north_star from goals.json]. What's the focus for today?"
 
 Wait for their response. They may give specific directives or say "continue yesterday's work."
 
-### 2. Set your own goals
+### 3. Update org goals.json with today's focus
 
-From the conversation, determine YOUR goals for the day:
-- Coordination tasks (who needs to be unblocked?)
-- Delegation (which agents get which work?)
-- Reviews (what needs your attention?)
-- Briefings (morning, evening)
+```bash
+node $CTX_FRAMEWORK_ROOT/dist/cli.js bus update-goals \
+  --org $CTX_ORG \
+  --daily-focus "the human's stated focus" \
+  --updated-by "$CTX_AGENT_NAME"
+```
 
-Write your GOALS.md with today's goals.
+Or directly via jq:
+```bash
+jq --arg focus "today's focus" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '.daily_focus = $focus | .daily_focus_set_at = $ts' \
+    $CTX_FRAMEWORK_ROOT/orgs/$CTX_ORG/goals.json > /tmp/goals.tmp \
+  && mv /tmp/goals.tmp $CTX_FRAMEWORK_ROOT/orgs/$CTX_ORG/goals.json
+```
 
-### 3. Set each agent's goals
+### 4. Set each agent's goals
 
 For each agent, based on their role and the daily focus:
+
 1. Determine 2-5 goals appropriate for their role
-2. Write their GOALS.md:
+2. Write their `goals.json`:
+   ```bash
+   cat > $CTX_FRAMEWORK_ROOT/orgs/$CTX_ORG/agents/<agent>/goals.json << 'EOF'
+   {
+     "focus": "role-specific focus derived from daily focus",
+     "goals": [
+       "goal 1",
+       "goal 2",
+       "goal 3"
+     ],
+     "bottleneck": "current blocker or empty string",
+     "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+     "updated_by": "$CTX_AGENT_NAME"
+   }
+   EOF
    ```
-   # Goals
-
-   ## Bottleneck
-   [what's blocking them, or "none"]
-
-   ## Goals
-   1. [goal derived from daily focus + their role]
-   2. [goal derived from daily focus + their role]
-   ...
-
-   ## Updated
-   [current ISO timestamp]
+3. Regenerate GOALS.md from goals.json:
+   ```bash
+   cortextos goals generate-md --agent <agent> --org $CTX_ORG
    ```
-3. Message the agent: "New goals for today: [summary]. Create tasks and confirm."
+4. Message the agent:
+   ```bash
+   cortextos bus send-message <agent> normal "New goals for today set. Check GOALS.md and create tasks."
+   ```
 
-### 4. Confirm task plans
+### 5. Set your own goals
+
+Write your own `goals.json` too (same format), then regenerate:
+```bash
+cortextos goals generate-md --agent $CTX_AGENT_NAME --org $CTX_ORG
+```
+
+### 6. Confirm task plans
 
 Each agent will create tasks from their goals and send you their task list.
 - Review for overlap (two agents doing the same thing)
 - Review for missing coverage (daily focus items nobody picked up)
 - Approve or adjust
 
-### 5. Update org goals.json
+## New Agent Bootstrap
 
-```bash
-# Update daily focus
-jq --arg focus "<today's focus>" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '.daily_focus = $focus | .daily_focus_set_at = $ts' \
-    orgs/<org>/goals.json > /tmp/goals.tmp && mv /tmp/goals.tmp orgs/<org>/goals.json
-```
+When a new agent comes online with an empty `goals.json` (focus and goals both empty), they will message you requesting goals. Handle this by:
+
+1. Checking their role from `IDENTITY.md`
+2. Writing their `goals.json` with appropriate starter goals
+3. Running `cortextos goals generate-md --agent <name> --org $CTX_ORG`
+4. Replying with confirmation
 
 ## Evening Review
 
 At end of day:
 1. Check each agent's task completion against their goals
 2. Note what was achieved vs planned
-3. Carry forward unfinished goals to tomorrow's conversation with human
-4. Update bottlenecks
+3. Update each agent's `goals.json` bottleneck field if new blockers emerged
+4. Carry forward unfinished goals to tomorrow's conversation with human
+5. Update org `goals.json` bottleneck:
+   ```bash
+   jq --arg b "today's biggest blocker" '.bottleneck = $b' \
+     $CTX_FRAMEWORK_ROOT/orgs/$CTX_ORG/goals.json > /tmp/goals.tmp \
+     && mv /tmp/goals.tmp $CTX_FRAMEWORK_ROOT/orgs/$CTX_ORG/goals.json
+   ```
 
 ## North Star
 
