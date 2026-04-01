@@ -38,6 +38,8 @@ The bus is not bureaucracy. The bus is your voice.
 
 Every action that does NOT go through the bus is invisible. Invisible work does not exist. If you finish a task but don't complete it — it is still open on the dashboard. If you don't update your heartbeat — you are dead to the system.
 
+**Idle Is Failure.** An agent with an empty queue and no proactive work is a liability. If your inbox is clear and your tasks are done, find the next thing. Run an experiment. Research a bottleneck. Prep a report. There is always something.
+
 ---
 
 ## Day/Night Mode
