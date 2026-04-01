@@ -9,7 +9,9 @@ Updated after each major implementation pass.
 
 - [x] Bidirectional config system (org → agent cascade, dashboard PATCH, agent notification)
 - [x] CI hotfix: SOUL.md `Idle Is Failure` restored (sprint1 tests passing)
+- [x] CI fix: agents test heartbeat path + running=false bug
 - [x] Goals system v1: goals.json templates, GOALS.md auto-generation, dashboard Goals card + agent Goals tab, goal-management skill updated
+- [x] Goals pipeline v2: morning-review cascade (Phase 3.5), evening-review writeback (Phase 7), orch/analyst CLAUDE.md bootstrap, HEARTBEAT.md Step 6 updated, strategy page deleted
 
 ---
 
@@ -19,90 +21,37 @@ Updated after each major implementation pass.
 
 `templates/orchestrator/AGENTS.md` and `templates/analyst/AGENTS.md` need a full review pass to ensure:
 - 12-file bootstrap order matches current template file list
-- Apply operational config section references `config.json` correctly
+- Operational config section references `config.json` correctly
 - Config-update inbox handler section is present and accurate
 
 **Files:** `templates/orchestrator/AGENTS.md`, `templates/analyst/AGENTS.md`
 
 ---
 
-### 1.1 — morning-review skill: integrate goal cascade
-
-`morning-review/SKILL.md` reads `GOALS.md` correctly but does not trigger the goal cascade as part of its daily flow. The cascade now lives in `goal-management/SKILL.md` but morning-review doesn't explicitly call it.
-
-**Fix:** Add a "Step N: Run goal cascade" section to morning-review that references the goal-management skill and confirms each agent's `goals.json` is updated before tasks are dispatched.
-
-**File:** `templates/orchestrator/.claude/skills/morning-review/SKILL.md`
-
----
-
-### 1.2 — evening-review skill: update goals.json bottleneck
-
-`evening-review/SKILL.md` currently reads `GOALS.md` in multiple phases but doesn't write back to `goals.json` when updating bottlenecks or carrying forward goals. Under the new system it should:
-1. Write updated bottleneck to `orgs/<org>/goals.json`
-2. Call `cortextos goals generate-md` for any agents whose bottleneck changed
-
-**File:** `templates/orchestrator/.claude/skills/evening-review/SKILL.md`
-
----
-
-### 1.3 — orchestrator and analyst CLAUDE.md: goals bootstrap check
-
-The goals bootstrap check (if `goals.json` empty → message orchestrator) was added to `templates/agent/CLAUDE.md` but NOT to:
-- `templates/orchestrator/CLAUDE.md` — orchestrator should instead check `orgs/<org>/goals.json` north_star is set; if not, ask user
-- `templates/analyst/CLAUDE.md` — needs same goals.json empty check as agent template
-
-**Files:** `templates/orchestrator/CLAUDE.md`, `templates/analyst/CLAUDE.md`
-
----
-
-### 1.4 — strategy page: redirect or remove
-
-`dashboard/src/app/(dashboard)/strategy/page.tsx` now duplicates org settings Goals card functionality (north_star, daily_focus, bottleneck, goals list with drag-drop). Decision needed:
-
-**Option A:** Delete strategy page, add link from nav to Settings > Org > Goals
-**Option B:** Keep strategy page but have it pull from `/api/goals` (already does) and remove the Goals card from org settings to avoid duplication
-
-James's stated intent was to move goals into settings and delete strategy. Confirm then execute.
-
-**Files:** `dashboard/src/app/(dashboard)/strategy/page.tsx`, nav component
-
----
-
 ### 1.5 — sprint1 tests: assert goals.json exists in templates
 
-`tests/sprint1-templates.test.ts` does not assert that `goals.json` exists in each agent template directory. Should add:
-- `templates/agent/goals.json` exists
-- `templates/orchestrator/goals.json` exists
-- `templates/analyst/goals.json` exists
-- Each has `focus`, `goals`, `bottleneck`, `updated_at`, `updated_by` keys
+`tests/sprint1-templates.test.ts` does not assert that `goals.json` exists in each agent template. Should add:
+- `templates/agent/goals.json` exists with `focus`, `goals`, `bottleneck`, `updated_at`, `updated_by` keys
+- Same for orchestrator and analyst templates
 - `templates/org/goals.json` has `north_star`, `daily_focus`, `goals`, `bottleneck` keys
 
 **File:** `tests/sprint1-templates.test.ts`
 
 ---
 
-### 1.6 — pre-existing test failure: reads heartbeat data for status
-
-`tests/unit/bus/agents.test.ts` — `reads heartbeat data for status` fails. The test writes a heartbeat to `ctxRoot/heartbeats/worker.json` but `listAgents` does not read from that path. Pre-existing, unrelated to config/goals work.
-
-**File:** `tests/unit/bus/agents.test.ts:113`
-
----
-
 ### 1.7 — USER.md audit
 
 All three templates (`agent/USER.md`, `orchestrator/USER.md`, `analyst/USER.md`) need review:
-- Are onboarding questions still relevant given pre-seeded context.json fields?
-- Does the format match what the dashboard profile editor expects?
+- Onboarding questions still relevant given pre-seeded context.json fields?
+- Format matches what the dashboard profile editor expects?
 
 ---
 
 ### 1.8 — TOOLS.md audit
 
 All three templates need review:
-- Commands should use `cortextos bus <cmd>` not `bash $CTX_FRAMEWORK_ROOT/bus/`
-- `cortextos goals generate-md` should be added to tool reference
+- Commands must use `cortextos bus <cmd>` not `bash $CTX_FRAMEWORK_ROOT/bus/`
+- Add `cortextos goals generate-md` to tool reference
 - Quick Reference table completeness
 
 ---
@@ -117,29 +66,19 @@ Generated by `add-agent.ts` from `context.json`. Check:
 
 ### 1.10 — MEMORY.md audit
 
-All three templates — check that the initial structure matches what dashboard memory tab reads/displays.
+All three templates — check initial structure matches dashboard memory tab display.
 
 ---
 
 ### 1.11 — pending-reminders.json (cron persistence on restart)
 
-Crons are lost when an agent hard-restarts. Current workaround: recreate from `config.json` on boot. Spec and implement `pending-reminders.json` as a persisted queue for cron state that survives hard restarts.
+Crons are lost on hard-restart. Current workaround: recreate from `config.json` on boot. Spec and implement `pending-reminders.json` as a persisted queue for cron state that survives hard restarts.
 
 **Dependency:** affects all agents, especially orchestrator (time-sensitive morning/evening crons)
 
 ---
 
-### 1.12 — orchestrator: goal-management skill in morning routine (mandated)
-
-Goal cascade is defined in `goal-management/SKILL.md` but the orchestrator doesn't yet have a hard mandate to run it every morning. Needs:
-- HEARTBEAT.md step: "Has morning goal cascade run today? If not, run it."
-- Config cron: morning-review already at 8AM, but morning-review should explicitly call goal-management
-
-**Files:** `templates/orchestrator/HEARTBEAT.md`, `templates/orchestrator/.claude/skills/morning-review/SKILL.md`
-
----
-
 ## Notes
 
-- `orgs/testorg/` and `orgs/neworg/` are test artifacts in the repo — their agent files (e.g., SOUL.md) will not have `Idle Is Failure` since they were created before this session. Not a bug, just stale test instances.
-- Dashboard strategy page uses server actions (`lib/actions/goals.ts`) while new goals API uses REST routes — two write paths exist for org goals.json, could drift. Resolve when deleting strategy page (item 1.4).
+- `orgs/testorg/` and `orgs/neworg/` are test artifacts — their SOUL.md won't have `Idle Is Failure` (created before this sprint). Not a bug.
+- Dashboard strategy page server actions (`lib/actions/goals.ts`) are now dead code — two write paths existed for goals.json. Strategy page deleted so this is the only remaining path now (REST API). The server actions file can be deleted in a cleanup pass.
