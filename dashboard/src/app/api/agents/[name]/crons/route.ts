@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import { getAgentDir, getAllAgents, CTX_FRAMEWORK_ROOT } from '@/lib/config';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 
 export const dynamic = 'force-dynamic';
 
@@ -103,9 +103,15 @@ export async function PUT(
     );
     const systemName = entry?.name ?? decoded;
     try {
-      execSync(
-        `bash "${CTX_FRAMEWORK_ROOT}/bus/send-message.sh" "${systemName}" normal 'Crons updated via dashboard. Re-read config.json and update your /loop crons.'`,
-        { timeout: 5000, stdio: 'pipe' }
+      spawnSync(
+        'bash',
+        [
+          path.join(CTX_FRAMEWORK_ROOT, 'bus', 'send-message.sh'),
+          systemName,
+          'normal',
+          'Crons updated via dashboard. Re-read config.json and update your /loop crons.',
+        ],
+        { timeout: 5000, stdio: 'pipe' },
       );
     } catch {
       // Non-fatal: agent might be offline

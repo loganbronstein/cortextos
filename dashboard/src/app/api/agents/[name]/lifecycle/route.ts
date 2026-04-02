@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { getFrameworkRoot, getCTXRoot } from '@/lib/config';
 
 export const dynamic = 'force-dynamic';
@@ -9,10 +9,6 @@ export const dynamic = 'force-dynamic';
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function shellEscape(str: string): string {
-  return str.replace(/'/g, "'\\''");
-}
 
 function isValidName(name: string): boolean {
   return /^[a-z0-9_-]+$/.test(name);
@@ -90,55 +86,45 @@ export async function POST(
   }
 
   const { env, frameworkRoot } = getShellEnv();
-  const escapedName = shellEscape(decoded);
-  const orgFlag = safeOrg ? ` --org '${shellEscape(safeOrg)}'` : '';
+  const orgArgs = safeOrg ? ['--org', safeOrg] : [];
 
-  let cmd: string;
+  let scriptArgs: string[];
   switch (action) {
     case 'enable':
-      cmd = `bash '${shellEscape(frameworkRoot)}/enable-agent.sh' '${escapedName}'${orgFlag}`;
+      scriptArgs = [path.join(frameworkRoot, 'enable-agent.sh'), decoded, ...orgArgs];
       break;
     case 'disable':
-      cmd = `bash '${shellEscape(frameworkRoot)}/disable-agent.sh' '${escapedName}'${orgFlag}`;
+      scriptArgs = [path.join(frameworkRoot, 'disable-agent.sh'), decoded, ...orgArgs];
       break;
     case 'restart':
-      cmd = `bash '${shellEscape(frameworkRoot)}/enable-agent.sh' '${escapedName}' --restart${orgFlag}`;
+      scriptArgs = [path.join(frameworkRoot, 'enable-agent.sh'), decoded, '--restart', ...orgArgs];
       break;
     default:
       return Response.json({ error: 'Invalid action' }, { status: 400 });
   }
 
-  try {
-    const stdout = execSync(cmd, {
-      encoding: 'utf-8',
-      timeout: 30000,
-      env,
-    });
+  const result = spawnSync('bash', scriptArgs, {
+    encoding: 'utf-8',
+    timeout: 30000,
+    env,
+    stdio: 'pipe',
+  });
 
-    return Response.json({
-      success: true,
-      action,
-      agent: decoded,
-      output: stdout.trim(),
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    // Try to extract stderr from ExecException
-    const stderr =
-      err && typeof err === 'object' && 'stderr' in err
-        ? String((err as { stderr: unknown }).stderr)
-        : undefined;
-
-    console.error(`[api/agents/${decoded}/lifecycle] POST error:`, message);
+  if (result.status !== 0) {
+    const stderr = result.stderr?.trim();
+    console.error(`[api/agents/${decoded}/lifecycle] POST error:`, stderr || result.stdout);
     return Response.json(
-      {
-        error: `Failed to ${action} agent`,
-        details: message,
-        stderr: stderr?.trim(),
-      },
+      { error: `Failed to ${action} agent`, stderr },
       { status: 500 },
     );
   }
+
+  return Response.json({
+    success: true,
+    action,
+    agent: decoded,
+    output: result.stdout.trim(),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -187,16 +173,17 @@ export async function DELETE(
   }
 
   // 1. Disable the agent first
-  try {
-    const orgFlag = safeDeleteOrg ? ` --org '${shellEscape(safeDeleteOrg)}'` : '';
-    execSync(
-      `bash '${shellEscape(frameworkRoot)}/disable-agent.sh' '${shellEscape(decoded)}'${orgFlag}`,
-      { encoding: 'utf-8', timeout: 30000, env },
+  {
+    const disableArgs = safeDeleteOrg ? [decoded, '--org', safeDeleteOrg] : [decoded];
+    const disableResult = spawnSync(
+      'bash',
+      [path.join(frameworkRoot, 'disable-agent.sh'), ...disableArgs],
+      { encoding: 'utf-8', timeout: 30000, env, stdio: 'pipe' },
     );
-  } catch (err: unknown) {
-    // Log but continue - agent may already be disabled
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[api/agents/${decoded}/lifecycle] disable during delete:`, message);
+    if (disableResult.status !== 0) {
+      // Log but continue - agent may already be disabled
+      console.warn(`[api/agents/${decoded}/lifecycle] disable during delete:`, disableResult.stderr);
+    }
   }
 
   // 2. Remove from enabled-agents.json

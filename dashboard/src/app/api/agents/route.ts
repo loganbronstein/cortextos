@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { getFrameworkRoot, getCTXRoot, getAllAgents } from '@/lib/config';
 import { getHeartbeat, getHealthStatus } from '@/lib/data/heartbeats';
 
@@ -14,9 +14,6 @@ export const dynamic = 'force-dynamic';
 const VALID_NAME = /^[a-z0-9_-]+$/;
 const VALID_TEMPLATES = ['agent', 'orchestrator', 'analyst'];
 
-function shellEscape(str: string): string {
-  return str.replace(/'/g, "'\\''");
-}
 
 // ---------------------------------------------------------------------------
 // GET /api/agents - List all agents
@@ -152,10 +149,14 @@ export async function POST(request: NextRequest) {
       PATH: process.env.PATH ?? '',
     };
 
-    execSync(
-      `bash '${shellEscape(frameworkRoot)}/scripts/generate-launchd.sh' '${shellEscape(name)}' '${shellEscape(agentDir)}'`,
-      { encoding: 'utf-8', timeout: 30000, env },
+    const result = spawnSync(
+      'bash',
+      [path.join(frameworkRoot, 'scripts', 'generate-launchd.sh'), name, agentDir],
+      { encoding: 'utf-8', timeout: 30000, env, stdio: 'pipe' },
     );
+    if (result.status !== 0) {
+      throw new Error(result.stderr || result.stdout || 'generate-launchd.sh failed');
+    }
 
     // 5. Update enabled-agents.json
     let enabledAgents: Record<string, unknown> = {};

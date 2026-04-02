@@ -1,6 +1,7 @@
 'use server';
 
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
+import path from 'path';
 import { revalidatePath } from 'next/cache';
 import { getFrameworkRoot, getOrgs } from '@/lib/config';
 import { getGoals, writeGoals, getGoalHistory } from '@/lib/data/goals';
@@ -21,10 +22,10 @@ function validateOrg(org: string): string | null {
 function logEvent(category: string, data: Record<string, unknown>): void {
   try {
     const frameworkRoot = getFrameworkRoot();
-    const payload = JSON.stringify(data).replace(/'/g, "'\\''");
-    execSync(
-      `bash "${frameworkRoot}/bus/log-event.sh" action "${category}" info '${payload}'`,
-      { timeout: 5000 },
+    spawnSync(
+      'bash',
+      [path.join(frameworkRoot, 'bus', 'log-event.sh'), 'action', category, 'info', JSON.stringify(data)],
+      { timeout: 5000, stdio: 'pipe' },
     );
   } catch {
     // Event logging is best-effort - never fail the action

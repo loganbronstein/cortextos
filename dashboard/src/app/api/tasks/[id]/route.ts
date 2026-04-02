@@ -1,18 +1,11 @@
 import { NextRequest } from 'next/server';
-import { execSync, execFileSync } from 'child_process';
+import { spawnSync } from 'child_process';
+import path from 'path';
 import { getTaskById } from '@/lib/data/tasks';
 import { getFrameworkRoot, getCTXRoot } from '@/lib/config';
 import { syncAll } from '@/lib/sync';
 
 export const dynamic = 'force-dynamic';
-
-// ---------------------------------------------------------------------------
-// Shell escape helper
-// ---------------------------------------------------------------------------
-
-function shellEscape(str: string): string {
-  return str.replace(/'/g, "'\\''");
-}
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -156,16 +149,15 @@ export async function PUT(
     // Notify new assignee if changed
     if (assignee && assignee !== oldAssignee && assignee !== 'human' && assignee !== 'user') {
       try {
-        // Security (H9): Use execFileSync array args — no shell, no string expansion.
-        execFileSync(
+        spawnSync(
           'bash',
           [
-            `${getFrameworkRoot()}/bus/send-message.sh`,
+            path.join(getFrameworkRoot(), 'bus', 'send-message.sh'),
             assignee,
             'normal',
             `Task reassigned to you: [${id}] ${taskData.title}`,
           ],
-          { timeout: 5000, stdio: 'pipe', env: { ...process.env, CTX_FRAMEWORK_ROOT: getFrameworkRoot(), CTX_ROOT: getCTXRoot(), CTX_AGENT_NAME: 'dashboard', CTX_ORG: task?.org || '' } }
+          { timeout: 5000, stdio: 'pipe', env: { ...process.env, CTX_FRAMEWORK_ROOT: getFrameworkRoot(), CTX_ROOT: getCTXRoot(), CTX_AGENT_NAME: 'dashboard', CTX_ORG: task?.org || '' } },
         );
       } catch { /* non-fatal */ }
     }
@@ -230,25 +222,29 @@ export async function PATCH(
   };
 
   try {
+    let spawnResult;
     if (status === 'completed') {
       // Use complete-task.sh for completion (handles additional side effects)
-      const summary = outputSummary
-        ? `'${shellEscape(String(outputSummary).slice(0, 2000))}'`
-        : "''";
-      execSync(
-        `bash '${shellEscape(frameworkRoot)}/bus/complete-task.sh' '${shellEscape(id)}' ${summary}`,
-        { encoding: 'utf-8', timeout: 10000, env },
+      const summaryArg = outputSummary ? String(outputSummary).slice(0, 2000) : '';
+      spawnResult = spawnSync(
+        'bash',
+        [path.join(frameworkRoot, 'bus', 'complete-task.sh'), id, summaryArg],
+        { encoding: 'utf-8', timeout: 10000, env, stdio: 'pipe' },
       );
     } else {
       // Use update-task.sh for other status changes
-      const args = [shellEscape(id), shellEscape(status)];
-      if (note) args.push(shellEscape(String(note).slice(0, 2000)));
-      if (blockedBy) args.push(shellEscape(String(blockedBy)));
+      const args: string[] = [id, status];
+      if (note) args.push(String(note).slice(0, 2000));
+      if (blockedBy) args.push(String(blockedBy));
 
-      execSync(
-        `bash '${shellEscape(frameworkRoot)}/bus/update-task.sh' ${args.map((a) => `'${a}'`).join(' ')}`,
-        { encoding: 'utf-8', timeout: 10000, env },
+      spawnResult = spawnSync(
+        'bash',
+        [path.join(frameworkRoot, 'bus', 'update-task.sh'), ...args],
+        { encoding: 'utf-8', timeout: 10000, env, stdio: 'pipe' },
       );
+    }
+    if (spawnResult.status !== 0) {
+      throw new Error(spawnResult.stderr || spawnResult.stdout || 'Script failed');
     }
 
     // Trigger sync so subsequent reads reflect the update

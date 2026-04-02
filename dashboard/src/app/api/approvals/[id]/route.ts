@@ -1,18 +1,11 @@
 import { NextRequest } from 'next/server';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
+import path from 'path';
 import { getApprovalById } from '@/lib/data/approvals';
 import { getFrameworkRoot, getCTXRoot } from '@/lib/config';
 import { syncAll } from '@/lib/sync';
 
 export const dynamic = 'force-dynamic';
-
-// ---------------------------------------------------------------------------
-// Shell escape helper
-// ---------------------------------------------------------------------------
-
-function shellEscape(str: string): string {
-  return str.replace(/'/g, "'\\''");
-}
 
 // Reject IDs that look like path traversal attempts
 function isValidId(id: string): boolean {
@@ -112,14 +105,18 @@ export async function PATCH(
     CTX_ORG: approval.org || '',
   };
 
-  const args = [shellEscape(id), decision];
-  if (sanitizedNote) args.push(shellEscape(sanitizedNote));
+  const args: string[] = [id, decision];
+  if (sanitizedNote) args.push(sanitizedNote);
 
   try {
-    execSync(
-      `bash '${shellEscape(frameworkRoot)}/bus/update-approval.sh' ${args.map((a) => `'${a}'`).join(' ')}`,
-      { encoding: 'utf-8', timeout: 10000, env },
+    const result = spawnSync(
+      'bash',
+      [path.join(frameworkRoot, 'bus', 'update-approval.sh'), ...args],
+      { encoding: 'utf-8', timeout: 10000, env, stdio: 'pipe' },
     );
+    if (result.status !== 0) {
+      throw new Error(result.stderr || result.stdout || 'update-approval.sh failed');
+    }
 
     // Trigger sync so subsequent reads reflect the resolution
     try {

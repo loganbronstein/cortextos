@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { existsSync, readFileSync, writeFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { getFrameworkRoot, getAllAgents, getAgentDir } from '@/lib/config';
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 
 export const dynamic = 'force-dynamic';
 
@@ -116,13 +116,14 @@ export async function PATCH(
     try {
       const sendMsg = join(frameworkRoot, 'bus', 'send-message.sh');
       if (existsSync(sendMsg)) {
-        execSync(
-          `bash "${sendMsg}" "${name}" normal 'Settings updated via dashboard. Re-read config.json and apply new operational settings.'`,
+        spawnSync(
+          'bash',
+          [sendMsg, name, 'normal', 'Settings updated via dashboard. Re-read config.json and apply new operational settings.'],
           {
             env: { ...process.env, CTX_FRAMEWORK_ROOT: frameworkRoot, CTX_AGENT_NAME: name },
             timeout: 5000,
             stdio: 'pipe',
-          }
+          },
         );
       }
     } catch (notifyErr) {

@@ -1,18 +1,11 @@
 'use server';
 
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
+import path from 'path';
 import { revalidatePath } from 'next/cache';
 import { getFrameworkRoot, getCTXRoot } from '@/lib/config';
 import { syncAll } from '@/lib/sync';
 import type { ActionResult } from '@/lib/types';
-
-// ---------------------------------------------------------------------------
-// Shell escape helper
-// ---------------------------------------------------------------------------
-
-function shellEscape(str: string): string {
-  return str.replace(/'/g, "'\\''");
-}
 
 // ---------------------------------------------------------------------------
 // Server Actions
@@ -48,14 +41,18 @@ export async function resolveApproval(
     CTX_AGENT_NAME: 'dashboard',
   };
 
-  const args = [shellEscape(id), decision];
-  if (note) args.push(shellEscape(note));
+  const args: string[] = [id, decision];
+  if (note) args.push(note);
 
   try {
-    execSync(
-      `bash '${shellEscape(frameworkRoot)}/bus/update-approval.sh' ${args.map((a) => `'${a}'`).join(' ')}`,
-      { encoding: 'utf-8', timeout: 10000, env },
+    const result = spawnSync(
+      'bash',
+      [path.join(frameworkRoot, 'bus', 'update-approval.sh'), ...args],
+      { encoding: 'utf-8', timeout: 10000, env, stdio: 'pipe' },
     );
+    if (result.status !== 0) {
+      throw new Error(result.stderr || result.stdout || 'update-approval.sh failed');
+    }
 
     // Sync so SQLite reflects the change
     try {
