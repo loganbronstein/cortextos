@@ -80,7 +80,7 @@ cortextos bus update-task "<task_id>" in_progress
 
 When done:
 ```bash
-cortextos bus complete-task "<task_id>" "<summary of what was produced>"
+cortextos bus complete-task "<task_id>" --result "<summary of what was produced>"
 ```
 
 ## Step 8: Guardrail self-check
@@ -101,6 +101,17 @@ If you learned something this cycle that should persist across sessions:
 - User preferences discovered
 - System behaviors noted
 - Append to MEMORY.md
+
+## Step 10: Re-ingest memory to knowledge base
+
+Keep your memory collection searchable and current:
+
+```bash
+cortextos bus kb-ingest ./MEMORY.md ./memory/$(date -u +%Y-%m-%d).md \
+  --org $CTX_ORG --agent $CTX_AGENT_NAME --scope private --collection memory-$CTX_AGENT_NAME --force
+```
+
+This runs automatically on every heartbeat cycle. It ensures past experiences, user preferences, and learned patterns are semantically searchable for future tasks. Skip if GEMINI_API_KEY is not configured.
 
 ---
 

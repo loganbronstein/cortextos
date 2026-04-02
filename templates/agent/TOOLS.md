@@ -146,20 +146,20 @@ Log a structured event. Events are the primary way the dashboard tracks your act
 No events = you look dead. Log aggressively.
 
 ```bash
-cortextos bus log-event <category> <event_name> <severity> '[json_payload]'
+cortextos bus log-event <category> <event_name> <severity> --meta '<json_payload>'
 ```
 
-- **category** (required): `heartbeat` | `task` | `comms` | `error` | `system` | `work`
-- **event_name** (required): Descriptive event name (e.g., `agent_heartbeat`, `task_completed`, `deploy_started`)
+- **category** (required): `action` | `task` | `heartbeat` | `message` | `approval` | `error` | `metric` | `milestone`
+- **event_name** (required): Descriptive event name (e.g., `session_start`, `task_completed`, `deploy_started`)
 - **severity** (required): `info` | `warning` | `error` | `critical`
-- **json_payload** (optional): Structured data as JSON string
+- **--meta** (optional): Metadata as JSON string
 
 Examples:
 ```bash
 cortextos bus log-event heartbeat agent_heartbeat info --meta '{"agent":"'$CTX_AGENT_NAME'"}'
 cortextos bus log-event task task_completed info --meta '{"task_id":"task_abc123","summary":"Deployed site"}'
 cortextos bus log-event error deploy_failed error --meta '{"repo":"website","error":"build timeout"}'
-cortextos bus log-event work research_complete info --meta '{"topic":"competitor analysis","findings":3}'
+cortextos bus log-event action research_complete info --meta '{"topic":"competitor analysis","findings":3}'
 ```
 
 ---
@@ -183,6 +183,52 @@ cortextos bus update-heartbeat "WORKING ON: Implementing user auth for the dashb
 
 ---
 
+## Knowledge Base (RAG)
+
+Semantic vector store for persistent, searchable memory. Requires `GEMINI_API_KEY` in `orgs/$CTX_ORG/.env`.
+
+### kb-query
+Search indexed documents using natural language.
+
+```bash
+cortextos bus kb-query "<question>" --org $CTX_ORG --agent $CTX_AGENT_NAME
+# Query a specific collection
+cortextos bus kb-query "<question>" --org $CTX_ORG --collection memory-$CTX_AGENT_NAME
+```
+
+### kb-ingest
+Index files or directories into a KB collection.
+
+```bash
+cortextos bus kb-ingest <path> --org $CTX_ORG --agent $CTX_AGENT_NAME --scope private [--collection <name>] [--force]
+# Ingest to org shared collection
+cortextos bus kb-ingest <path> --org $CTX_ORG --scope shared
+```
+
+### kb-setup
+First-time setup — creates the three standard collections for the org.
+
+```bash
+cortextos bus kb-setup --org $CTX_ORG
+```
+
+### kb-collections
+List available KB collections for the org.
+
+```bash
+cortextos bus kb-collections --org $CTX_ORG
+```
+
+**Three standard collections:**
+
+| Collection | Scope | Purpose |
+|---|---|---|
+| `memory-{agent}` | Private | MEMORY.md + daily memory — auto-ingested every heartbeat |
+| `private-{agent}` | Private | Agent outputs, research docs, workspace files |
+| `shared-{org}` | Org-wide | Research findings, reports, shared org knowledge |
+
+---
+
 ## Approvals
 
 ### create-approval
@@ -193,12 +239,12 @@ cortextos bus create-approval "<title>" <category> "[context]"
 ```
 
 - **title** (required): What you are requesting approval for
-- **category** (required): `deploy` | `comms` | `financial` | `data` | `other`
+- **category** (required): `external-comms` | `financial` | `deployment` | `data-deletion` | `other`
 - **context** (optional): Additional details to help the human decide
 
 Example:
 ```bash
-cortextos bus create-approval "Send cold outreach to 50 leads" comms "Draft email attached in task_abc123. Target list: SaaS founders."
+cortextos bus create-approval "Send cold outreach to 50 leads" external-comms "Draft email attached in task_abc123. Target list: SaaS founders."
 ```
 
 ### update-approval

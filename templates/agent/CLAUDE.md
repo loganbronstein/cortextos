@@ -17,15 +17,21 @@ If `ONBOARDED`: continue with the session start protocol below.
 
 ## On Session Start
 
-1. Read all bootstrap files: IDENTITY.md, SOUL.md, GUARDRAILS.md, GOALS.md, HEARTBEAT.md, MEMORY.md, USER.md, TOOLS.md, SYSTEM.md
-2. Read org knowledge base: `../../knowledge.md` (shared facts all agents need)
-3. Discover available skills: `cortextos bus list-skills`
-4. Discover active agents: `cortextos list-agents` (live roster from enabled-agents.json)
-5. Read `config.json` and set up crons via `/loop` (check CronList first - no duplicates)
-6. Check today's memory file (`memory/YYYY-MM-DD.md`) for any in-progress work
-7. Check inbox for pending messages
-8. **Goals check**: Check `goals.json` — if `focus` and `goals` are both empty, message your orchestrator: "I'm online but have no goals set. Can you send me today's goals?" Then read GOALS.md for any pre-set goals.
-9. Notify user on Telegram that you're online
+See AGENTS.md for the full 13-step session start checklist. Key steps:
+
+1. **Send boot message first**: `cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID "Booting up... one moment"`
+2. Read all bootstrap files: IDENTITY.md, SOUL.md, GUARDRAILS.md, GOALS.md, HEARTBEAT.md, MEMORY.md, USER.md, TOOLS.md, SYSTEM.md
+3. Read org knowledge base: `../../knowledge.md`
+4. Discover available skills: `cortextos bus list-skills --format text`
+5. Discover active agents: `cortextos list-agents`
+6. Restore crons from `config.json` — run CronList first (no duplicates)
+7. Check today's memory file for in-progress work
+8. If resuming a task, query KB: `cortextos bus kb-query "<task topic>" --org $CTX_ORG`
+9. Check inbox: `cortextos bus check-inbox`
+10. Update heartbeat: `cortextos bus update-heartbeat "online"`
+11. Log session start: `cortextos bus log-event action session_start info --meta '{"agent":"'$CTX_AGENT_NAME'"}'`
+12. Write session start entry to daily memory
+13. Send full online status — **only AFTER crons are confirmed set**
 
 ## Task Workflow
 
@@ -111,7 +117,7 @@ Defined in `config.json` under `crons` array. Set up once per session via `/loop
 **Remove:** Cancel the `/loop`, remove from `config.json`
 **Format:** `{"name": "...", "interval": "5m", "prompt": "..."}`
 
-Crons expire after 3 days but are recreated from config on each restart.
+Crons expire after 7 days but are recreated from config on each restart.
 
 ---
 
@@ -162,10 +168,10 @@ Sessions auto-restart with `--continue` every ~71 hours. On context exhaustion, 
 ### Logs
 | Log | Path |
 |-----|------|
-| Activity | `~/.cortextos/$CTX_INSTANCE/logs/$CTX_AGENT_NAME/activity.log` |
-| Fast-checker | `~/.cortextos/$CTX_INSTANCE/logs/$CTX_AGENT_NAME/fast-checker.log` |
-| Stdout | `~/.cortextos/$CTX_INSTANCE/logs/$CTX_AGENT_NAME/stdout.log` |
-| Stderr | `~/.cortextos/$CTX_INSTANCE/logs/$CTX_AGENT_NAME/stderr.log` |
+| Activity | `~/.cortextos/$CTX_INSTANCE_ID/logs/$CTX_AGENT_NAME/activity.log` |
+| Fast-checker | `~/.cortextos/$CTX_INSTANCE_ID/logs/$CTX_AGENT_NAME/fast-checker.log` |
+| Stdout | `~/.cortextos/$CTX_INSTANCE_ID/logs/$CTX_AGENT_NAME/stdout.log` |
+| Stderr | `~/.cortextos/$CTX_INSTANCE_ID/logs/$CTX_AGENT_NAME/stderr.log` |
 
 ### State
 | File | Purpose |
