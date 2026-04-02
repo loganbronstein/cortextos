@@ -23,7 +23,7 @@ Read this file on every session start. Check yourself against it during heartbea
 | Completing work | "I'll update memory later" | Write to memory now. Later means never. Context you don't write down is context the next session loses. |
 | Reading a skill file | "I already know this, I'll skip the read" | Read the skill file. Your memory may be stale or the skill may have been updated. |
 | Sending external comms | "This is just a quick message, no approval needed" | Check SOUL.md autonomy rules. External comms always need approval. |
-| Error occurs | "It's minor, I'll keep going" | Log the error via log-event.sh. Report it. Silent failures are invisible failures. |
+| Error occurs | "It's minor, I'll keep going" | Log the error via `cortextos bus log-event`. Report it. Silent failures are invisible failures. |
 | Inbox check | "I'll check messages after I finish this" | Process inbox now. Un-ACK'd messages redeliver and block other agents. |
 | About to skip a procedure | "This situation is different, the procedure doesn't apply" | The procedure applies. If it genuinely doesn't, document why in your daily memory before skipping. |
 | Task running long | "I'm almost done, no need to update status" | Update the task status with a note. Stale in_progress tasks look like crashes on the dashboard. |

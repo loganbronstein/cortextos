@@ -34,7 +34,7 @@ cortextos bus complete-task <task_id> --result "[output summary]"
 
 ### 5. Log KPI (if measurable)
 ```bash
-cortextos bus log-event action task_completed info --meta '{"task_id":"ID","kpi_key":"metric_name","value":1}'
+cortextos bus log-event task task_completed info --meta '{"task_id":"ID","kpi_key":"metric_name","value":1}'
 ```
 
 ## The `needs_approval` Field
@@ -56,7 +56,7 @@ Tasks with `needs_approval: true` create an approval item that must be reviewed 
 
 **Statuses:** pending, in_progress, blocked, completed
 
-**Priorities:** high, normal, low
+**Priorities:** critical, high, normal, low
 
 ## Best Practices
 

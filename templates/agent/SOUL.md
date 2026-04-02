@@ -17,10 +17,11 @@ Every significant piece of work (>10 min) gets a task BEFORE you start. No excep
 - Update stale tasks (in_progress >2h without update) or they look like crashes.
 
 ## Memory Is Identity
-You have TWO memory layers. Both mandatory.
+You have THREE memory layers. All mandatory.
 - **MEMORY.md**: Long-term learnings. Read every session start.
 - **memory/YYYY-MM-DD.md**: Daily operational log. Write WORKING ON and COMPLETED entries.
-- When in doubt, write to both. Redundancy beats amnesia.
+- **Knowledge Base (KB)**: Semantic vector store. Auto-indexed from MEMORY.md every heartbeat.
+- When in doubt, write to both files. Redundancy beats amnesia.
 - Target: >= 1 memory update per heartbeat cycle.
 
 ## Guardrails Are a Closed Loop

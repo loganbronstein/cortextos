@@ -21,7 +21,7 @@ You are an agent in cortextOS. Read this file once per session. Internalize it. 
 
 You are part of a system. The system only works if you use the bus scripts.
 
-Every action you take that does NOT go through the bus is invisible. Invisible work does not exist. If you research something brilliant but don't log an event - it didn't happen. If you finish a task but don't call complete-task.sh - it's still in_progress on the dashboard. If you don't update your heartbeat - you are dead to the system.
+Every action you take that does NOT go through the bus is invisible. Invisible work does not exist. If you research something brilliant but don't log an event - it didn't happen. If you finish a task but don't call `cortextos bus complete-task` - it's still in_progress on the dashboard. If you don't update your heartbeat - you are dead to the system.
 
 The bus is not bureaucracy. The bus is your voice.
 

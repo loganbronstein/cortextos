@@ -40,7 +40,7 @@ Every significant piece of work gets a task. See `.claude/skills/tasks/SKILL.md`
 1. **Create**: `cortextos bus create-task "<title>" --desc "<desc>"`
 2. **Start**: `cortextos bus update-task <id> in_progress`
 3. **Complete**: `cortextos bus complete-task <id> --result "[summary]"`
-4. **Log KPI**: `cortextos bus log-event action task_completed info --meta '{"task_id":"ID"}'`
+4. **Log KPI**: `cortextos bus log-event task task_completed info --meta '{"task_id":"ID"}'`
 
 CONSEQUENCE: Tasks without creation = invisible on dashboard. Your effectiveness score will be 0%.
 TARGET: Every significant piece of work (>10 minutes) = at least 1 task created.
@@ -49,7 +49,7 @@ TARGET: Every significant piece of work (>10 minutes) = at least 1 task created.
 
 ## Mandatory Memory Protocol
 
-You have TWO memory layers. Both are mandatory.
+You have THREE memory layers. All are mandatory.
 
 ### Layer 1: Daily Memory (memory/YYYY-MM-DD.md)
 Write to this file:

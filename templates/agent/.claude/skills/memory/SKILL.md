@@ -6,7 +6,7 @@ triggers: ["memory", "remember", "write memory", "update memory", "session memor
 
 # Memory
 
-You have two memory layers. Both are mandatory. Without memory, session crashes lose all context and you start from zero.
+You have three memory layers. All are mandatory. Without memory, session crashes lose all context and you start from zero.
 
 ---
 

@@ -76,11 +76,11 @@ export class AgentPTY {
       CRM_TEMPLATE_ROOT: this.env.frameworkRoot,
     };
 
-    // Source org-level shared secrets first (orgs/{org}/.env).
-    // These are shared across all agents in the org: OPENAI_KEY, APIFY_TOKEN, etc.
+    // Source org-level shared secrets (orgs/{org}/secrets.env).
+    // These are shared across all agents in the org: OPENAI_KEY, APIFY_TOKEN, GEMINI_API_KEY, etc.
     // Agent .env is loaded after and overrides org values — agent-specific keys win.
     if (this.env.org && this.env.projectRoot) {
-      const orgEnvFile = join(this.env.projectRoot, 'orgs', this.env.org, '.env');
+      const orgEnvFile = join(this.env.projectRoot, 'orgs', this.env.org, 'secrets.env');
       if (existsSync(orgEnvFile)) {
         const content = readFileSync(orgEnvFile, 'utf-8');
         for (const line of content.split('\n')) {
@@ -94,7 +94,7 @@ export class AgentPTY {
       }
     }
 
-    // Source agent .env file (overrides org .env for same key names).
+    // Source agent .env file (overrides org secrets.env for same key names).
     // Contains agent-specific secrets: BOT_TOKEN, CHAT_ID, CLAUDE_CODE_OAUTH_TOKEN.
     const agentEnvFile = join(this.env.agentDir, '.env');
     if (existsSync(agentEnvFile)) {
@@ -107,6 +107,24 @@ export class AgentPTY {
           ptyEnv[trimmed.slice(0, eqIdx).trim()] = trimmed.slice(eqIdx + 1).trim();
         }
       }
+    }
+
+    // Add convenience CTX_* aliases used throughout agent templates.
+    // CTX_TELEGRAM_CHAT_ID: alias for CHAT_ID from the agent's .env
+    if (ptyEnv['CHAT_ID']) {
+      ptyEnv['CTX_TELEGRAM_CHAT_ID'] = ptyEnv['CHAT_ID'];
+    }
+    // CTX_ORCHESTRATOR_AGENT: read from org context.json so agents can route to orchestrator
+    if (this.env.projectRoot && this.env.org) {
+      try {
+        const contextPath = join(this.env.projectRoot, 'orgs', this.env.org, 'context.json');
+        if (existsSync(contextPath)) {
+          const ctx = JSON.parse(readFileSync(contextPath, 'utf-8'));
+          if (ctx.orchestrator) {
+            ptyEnv['CTX_ORCHESTRATOR_AGENT'] = ctx.orchestrator;
+          }
+        }
+      } catch { /* leave unset if context.json is missing or malformed */ }
     }
 
     // Spawn claude directly (no shell wrapper) — cross-platform, no shell escaping needed.

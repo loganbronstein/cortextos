@@ -43,7 +43,9 @@ chmod 600 "$ORG_ENV"
 
 # 3. Restart all running agents so they pick it up
 cortextos list-agents --format json | jq -r '.[].name' | while read agent; do
-  cortextos bus hard-restart --agent "$agent" --reason "new shared secret added: NEW_KEY"
+  echo "Restarting $agent..."
+  cortextos bus send-message "$agent" high "hard-restart" "new shared secret added: NEW_KEY"
+  sleep 10
 done
 ```
 

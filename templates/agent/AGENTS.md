@@ -1,6 +1,6 @@
 # cortextOS Agent
 
-You are a persistent 24/7 Claude Code agent. You run via the PM2 daemon with auto-restart and crash recovery, controlled via Telegram.
+You are a persistent 24/7 Claude Code agent. You run via the cortextOS daemon with auto-restart and crash recovery, controlled via Telegram.
 
 ---
 
@@ -98,14 +98,16 @@ Three distinct states when you cannot proceed. Use the right one.
 When your work depends on another task or agent completing first:
 
 ```bash
-# Block your task, pointing to the blocker
-cortextos bus update-task <task_id> blocked "Waiting for: <what>" --blocked-by <blocker_task_id>
+# Block your task
+cortextos bus update-task <task_id> blocked
+# Log the blocker so it's visible in the activity feed
+cortextos bus log-event task task_blocked info --meta '{"task_id":"<task_id>","blocked_by":"<blocker_task_id>","reason":"<what>"}'
 ```
 
 When the blocker completes, you will receive an inbox message automatically. Unblock immediately:
 
 ```bash
-cortextos bus update-task <task_id> in_progress "Blocker resolved — resuming"
+cortextos bus update-task <task_id> in_progress
 ```
 
 ### HUMAN TASK (capability — only a human can do this)
@@ -117,7 +119,8 @@ When you CANNOT do something yourself (needs payment, physical access, login, su
 cortextos bus create-task "[HUMAN] <what needs to be done>" --desc "<instructions>" --project human-tasks
 
 # Block your own task pointing to it
-cortextos bus update-task <your_task_id> blocked "Blocked by human task: <human_task_id>" --blocked-by <human_task_id>
+cortextos bus update-task <your_task_id> blocked
+cortextos bus log-event task task_blocked info --meta '{"task_id":"<your_task_id>","blocked_by":"<human_task_id>","reason":"human dependency"}'
 
 # Notify orchestrator so it surfaces in briefing
 cortextos bus send-message $CTX_ORCHESTRATOR_AGENT normal "Human task created: [HUMAN] <title> — needed before I can proceed with <your task>"
@@ -140,7 +143,8 @@ APPR_ID=$(cortextos bus create-approval "<what you want to do>" "<category>" "<c
 cortextos bus send-telegram $CTX_TELEGRAM_CHAT_ID "Approval needed: <title> — check dashboard"
 
 # Block your task
-cortextos bus update-task <task_id> blocked "Awaiting approval: $APPR_ID" --blocked-by $APPR_ID
+cortextos bus update-task <task_id> blocked
+cortextos bus log-event task task_blocked info --meta '{"task_id":"<task_id>","blocked_by":"'$APPR_ID'","reason":"awaiting approval"}'
 ```
 
 When the user decides, you receive an inbox message with `approval_id`, `decision` (approved/rejected), and `note`.
@@ -269,7 +273,7 @@ cortextos bus kb-ingest /path/to/research --org $CTX_ORG --scope shared
 cortextos bus kb-setup --org $CTX_ORG
 ```
 
-**Requires:** `GEMINI_API_KEY` in `orgs/$CTX_ORG/.env`
+**Requires:** `GEMINI_API_KEY` in `orgs/$CTX_ORG/secrets.env`
 
 CONSEQUENCE: Without querying, you repeat work the org already did. Without ingesting, the org permanently loses institutional memory.
 TARGET: Query before every task. Ingest every significant output. Memory collection updates itself at heartbeat.
@@ -384,7 +388,7 @@ Each skill is in `.claude/skills/<name>/SKILL.md`. When you encounter a scenario
 Key paths:
 - Agent config: `orgs/{org}/agents/{agent}/config.json` — crons, model, session limits
 - Agent secrets: `orgs/{org}/agents/{agent}/.env` — BOT_TOKEN, CHAT_ID, ALLOWED_USER
-- Org secrets: `orgs/{org}/.env` — shared API keys (GEMINI_API_KEY, OPENAI_API_KEY, etc.)
+- Org secrets: `orgs/{org}/secrets.env` — shared API keys (GEMINI_API_KEY, OPENAI_API_KEY, etc.)
 - Logs: `~/.cortextos/$CTX_INSTANCE_ID/logs/$CTX_AGENT_NAME/` — activity, fast-checker, stdout, stderr
 
 For agent lifecycle (spawn, restart, config), see `.claude/skills/agent-management/SKILL.md`.

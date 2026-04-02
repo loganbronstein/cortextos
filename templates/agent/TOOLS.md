@@ -11,10 +11,10 @@ Environment variables are loaded in this order (later values override earlier):
 
 1. **Base shell** — PATH, HOME, SHELL, TERM (from OS)
 2. **CTX_* vars** — routing vars written by agent-pty at start (CTX_ROOT, CTX_AGENT_NAME, CTX_ORG, etc.)
-3. **orgs/{org}/.env** — shared secrets for all agents in the org
+3. **orgs/{org}/secrets.env** — shared secrets for all agents in the org
 4. **orgs/{org}/agents/{agent}/.env** — agent-specific secrets (override org values)
 
-**Shared secrets** (put in `orgs/{org}/.env` — one place, all agents get it):
+**Shared secrets** (put in `orgs/{org}/secrets.env` — one place, all agents get it):
 - `OPENAI_API_KEY` — if using OpenAI
 - `APIFY_TOKEN` — if using Apify actors
 - Any third-party API key used by multiple agents
@@ -185,7 +185,7 @@ cortextos bus update-heartbeat "WORKING ON: Implementing user auth for the dashb
 
 ## Knowledge Base (RAG)
 
-Semantic vector store for persistent, searchable memory. Requires `GEMINI_API_KEY` in `orgs/$CTX_ORG/.env`.
+Semantic vector store for persistent, searchable memory. Requires `GEMINI_API_KEY` in `orgs/$CTX_ORG/secrets.env`.
 
 ### kb-query
 Search indexed documents using natural language.
@@ -315,10 +315,10 @@ cortextos bus list-skills [--format text|json]
 Aggregate all agent heartbeats into a single JSON object keyed by agent name.
 
 ```bash
-cortextos bus read-all-heartbeats [--brief]
+cortextos bus read-all-heartbeats [--format json|text]
 ```
 
-- **--brief**: Omit `current_task` and `loop_interval` fields (~60% smaller output). Use during automated heartbeat checks.
+- **--format**: Output format. `json` for machine-readable (default: `text`).
 
 ---
 
