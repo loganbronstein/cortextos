@@ -1,8 +1,8 @@
 import { NextRequest } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
-import { spawnSync } from 'child_process';
 import { getFrameworkRoot, getCTXRoot, getAllAgents } from '@/lib/config';
+import { IPCClient } from '@/lib/ipc-client';
 import { getHeartbeat, getHealthStatus } from '@/lib/data/heartbeats';
 
 export const dynamic = 'force-dynamic';
@@ -141,21 +141,21 @@ export async function POST(request: NextRequest) {
       await fs.mkdir(path.join(ctxRoot, dir, name), { recursive: true });
     }
 
-    // 4. Run generate-launchd.sh
-    const env = {
-      ...process.env,
-      CTX_FRAMEWORK_ROOT: frameworkRoot,
-      CTX_ROOT: ctxRoot,
-      PATH: process.env.PATH ?? '',
-    };
-
-    const result = spawnSync(
-      'bash',
-      [path.join(frameworkRoot, 'scripts', 'generate-launchd.sh'), name, agentDir],
-      { encoding: 'utf-8', timeout: 30000, env, stdio: 'pipe' },
-    );
-    if (result.status !== 0) {
-      throw new Error(result.stderr || result.stdout || 'generate-launchd.sh failed');
+    // 4. Register with daemon via IPC (replaces Mac-only generate-launchd.sh + launchctl)
+    const instanceId = process.env.CTX_INSTANCE_ID ?? 'default';
+    const ipc = new IPCClient(instanceId);
+    const daemonRunning = await ipc.isDaemonRunning();
+    if (daemonRunning) {
+      const ipcResult = await ipc.send({
+        type: 'start-agent',
+        agent: name,
+        data: { dir: agentDir },
+      });
+      if (!ipcResult.success) {
+        console.warn(`[api/agents] POST: daemon start-agent returned error for "${name}":`, ipcResult.error);
+      }
+    } else {
+      console.info(`[api/agents] POST: daemon not running; "${name}" registered and will start with daemon.`);
     }
 
     // 5. Update enabled-agents.json

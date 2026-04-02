@@ -1,8 +1,8 @@
 import { NextRequest } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
-import { spawnSync } from 'child_process';
 import { getFrameworkRoot, getCTXRoot } from '@/lib/config';
+import { IPCClient } from '@/lib/ipc-client';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,21 +22,6 @@ function validateIdentifier(value: string | null | undefined, field: string): st
     throw new Error(`Invalid ${field}: must match [a-z0-9_-]+`);
   }
   return value;
-}
-
-function getShellEnv() {
-  const frameworkRoot = getFrameworkRoot();
-  const ctxRoot = getCTXRoot();
-  return {
-    env: {
-      ...process.env,
-      CTX_FRAMEWORK_ROOT: frameworkRoot,
-      CTX_ROOT: ctxRoot,
-      PATH: process.env.PATH ?? '',
-    },
-    frameworkRoot,
-    ctxRoot,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -85,46 +70,92 @@ export async function POST(
     }
   }
 
-  const { env, frameworkRoot } = getShellEnv();
-  const orgArgs = safeOrg ? ['--org', safeOrg] : [];
+  const instanceId = process.env.CTX_INSTANCE_ID ?? 'default';
+  const ipc = new IPCClient(instanceId);
 
-  let scriptArgs: string[];
-  switch (action) {
-    case 'enable':
-      scriptArgs = [path.join(frameworkRoot, 'enable-agent.sh'), decoded, ...orgArgs];
-      break;
-    case 'disable':
-      scriptArgs = [path.join(frameworkRoot, 'disable-agent.sh'), decoded, ...orgArgs];
-      break;
-    case 'restart':
-      scriptArgs = [path.join(frameworkRoot, 'enable-agent.sh'), decoded, '--restart', ...orgArgs];
-      break;
-    default:
-      return Response.json({ error: 'Invalid action' }, { status: 400 });
+  try {
+    let ipcResult: { success: boolean; data?: unknown; error?: string };
+    let registryMessage = '';
+
+    switch (action) {
+      case 'enable': {
+        const ctxRoot = getCTXRoot();
+        const enabledAgentsPath = path.join(ctxRoot, 'config', 'enabled-agents.json');
+        let enabledAgents: Record<string, unknown> = {};
+        try {
+          const raw = await fs.readFile(enabledAgentsPath, 'utf-8');
+          enabledAgents = JSON.parse(raw);
+        } catch { /* file may not exist yet */ }
+        enabledAgents[decoded] = {
+          ...(typeof enabledAgents[decoded] === 'object' && enabledAgents[decoded] !== null
+            ? (enabledAgents[decoded] as object)
+            : {}),
+          enabled: true,
+          ...(safeOrg ? { org: safeOrg } : {}),
+        };
+        await fs.mkdir(path.dirname(enabledAgentsPath), { recursive: true });
+        await fs.writeFile(enabledAgentsPath, JSON.stringify(enabledAgents, null, 2) + '\n', 'utf-8');
+        registryMessage = 'enabled in registry';
+        ipcResult = await ipc.send({ type: 'start-agent', agent: decoded });
+        break;
+      }
+
+      case 'disable': {
+        ipcResult = await ipc.send({ type: 'stop-agent', agent: decoded });
+        const ctxRoot = getCTXRoot();
+        const enabledAgentsPath = path.join(ctxRoot, 'config', 'enabled-agents.json');
+        try {
+          const raw = await fs.readFile(enabledAgentsPath, 'utf-8');
+          const enabledAgents = JSON.parse(raw) as Record<string, unknown>;
+          if (enabledAgents[decoded] && typeof enabledAgents[decoded] === 'object') {
+            (enabledAgents[decoded] as Record<string, unknown>).enabled = false;
+          }
+          await fs.writeFile(enabledAgentsPath, JSON.stringify(enabledAgents, null, 2) + '\n', 'utf-8');
+          registryMessage = 'disabled in registry';
+        } catch {
+          registryMessage = 'registry update failed (non-fatal)';
+        }
+        break;
+      }
+
+      case 'restart': {
+        ipcResult = await ipc.send({ type: 'restart-agent', agent: decoded });
+        registryMessage = '';
+        break;
+      }
+
+      default:
+        return Response.json({ error: 'Invalid action' }, { status: 400 });
+    }
+
+    if (!ipcResult.success) {
+      const isDaemonDown = ipcResult.error?.includes('Daemon is not running');
+      if (isDaemonDown && action === 'enable') {
+        return Response.json({
+          success: true,
+          action,
+          agent: decoded,
+          output: `${registryMessage}; daemon not running — agent will start when daemon starts`,
+        });
+      }
+      console.error(`[api/agents/${decoded}/lifecycle] POST IPC error (${action}):`, ipcResult.error);
+      return Response.json(
+        { error: `Failed to ${action} agent: ${ipcResult.error ?? 'unknown IPC error'}` },
+        { status: 500 },
+      );
+    }
+
+    return Response.json({
+      success: true,
+      action,
+      agent: decoded,
+      output: [registryMessage, String(ipcResult.data ?? '')].filter(Boolean).join('; '),
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[api/agents/${decoded}/lifecycle] POST error:`, message);
+    return Response.json({ error: `Failed to ${action} agent` }, { status: 500 });
   }
-
-  const result = spawnSync('bash', scriptArgs, {
-    encoding: 'utf-8',
-    timeout: 30000,
-    env,
-    stdio: 'pipe',
-  });
-
-  if (result.status !== 0) {
-    const stderr = result.stderr?.trim();
-    console.error(`[api/agents/${decoded}/lifecycle] POST error:`, stderr || result.stdout);
-    return Response.json(
-      { error: `Failed to ${action} agent` },
-      { status: 500 },
-    );
-  }
-
-  return Response.json({
-    success: true,
-    action,
-    agent: decoded,
-    output: result.stdout.trim(),
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -144,7 +175,7 @@ export async function DELETE(
     return Response.json({ error: 'Invalid agent name' }, { status: 400 });
   }
 
-  const { env, frameworkRoot, ctxRoot } = getShellEnv();
+  const ctxRoot = getCTXRoot();
   const enabledAgentsPath = path.join(ctxRoot, 'config', 'enabled-agents.json');
   const deleteFiles = request.nextUrl.searchParams.get('deleteFiles') === 'true';
 
@@ -172,17 +203,13 @@ export async function DELETE(
     }
   }
 
-  // 1. Disable the agent first
+  // 1. Tell daemon to stop the agent (best-effort; agent may already be stopped)
   {
-    const disableArgs = safeDeleteOrg ? [decoded, '--org', safeDeleteOrg] : [decoded];
-    const disableResult = spawnSync(
-      'bash',
-      [path.join(frameworkRoot, 'disable-agent.sh'), ...disableArgs],
-      { encoding: 'utf-8', timeout: 30000, env, stdio: 'pipe' },
-    );
-    if (disableResult.status !== 0) {
-      // Log but continue - agent may already be disabled
-      console.warn(`[api/agents/${decoded}/lifecycle] disable during delete:`, disableResult.stderr);
+    const instanceId = process.env.CTX_INSTANCE_ID ?? 'default';
+    const ipc = new IPCClient(instanceId);
+    const stopResult = await ipc.send({ type: 'stop-agent', agent: decoded });
+    if (!stopResult.success && !stopResult.error?.includes('Daemon is not running')) {
+      console.warn(`[api/agents/${decoded}/lifecycle] stop during delete:`, stopResult.error);
     }
   }
 
@@ -206,7 +233,7 @@ export async function DELETE(
   // 3. Optionally remove agent directory
   if (deleteFiles && safeDeleteOrg) {
     try {
-      const agentDir = path.join(frameworkRoot, 'orgs', safeDeleteOrg, 'agents', decoded);
+      const agentDir = path.join(getFrameworkRoot(), 'orgs', safeDeleteOrg, 'agents', decoded);
       await fs.rm(agentDir, { recursive: true, force: true });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
