@@ -227,27 +227,27 @@ cortextos bus kb-ingest ./MEMORY.md ./crm/contacts.json \
 cd "$CTX_FRAMEWORK_ROOT" && cortextos start <new_name>
 ```
 
-Tell the user: "Switch to [bot name] on Telegram and send /onboarding. The files are pre-loaded — onboarding will confirm the settings and handle any tool setup (Google auth, API keys, etc.) rather than asking from scratch."
-
-Send a welcome message to the new agent:
+Send a workspace orientation message via the bus. This is the first message the agent will receive. It must instruct the agent to read the entire migrated workspace before doing anything else — including before contacting the user — and then run a migration-aware onboarding:
 
 ```bash
 cortextos bus send-message <new_name> normal \
-  'Welcome to <org>. Files are pre-loaded: IDENTITY, SOUL, MEMORY, USER, GOALS, GUARDRAILS, skills, docs. Read all bootstrap files first, then confirm tool access and start working.'
-```
+  'You have been migrated from a legacy agent workspace into cortextOS v2. Before doing anything else — before messaging the user, before setting up crons, before running onboarding — read your entire workspace:
 
-Write initial goals for the new agent:
+1. Bootstrap files: IDENTITY.md, SOUL.md, MEMORY.md, USER.md, GUARDRAILS.md, GOALS.md, HEARTBEAT.md
+2. All files in .claude/skills/ — understand what each skill does
+3. All files in docs/ — understand what knowledge has been ported
+4. Any additional folders (crm/, meetings/, scripts/, etc.)
 
-```bash
-cortextos bus send-message <new_name> normal \
-  'Your goals are set. Check GOALS.md and create tasks aligned to: <daily_focus from org goals.json>.'
+Once you have read everything, send the user a Telegram message confirming what you found: your role, what skills you have, what docs are loaded, and any gaps or missing credentials you noticed.
+
+Then proceed with cortextOS onboarding (/onboarding), but treat it as a migration-aware onboarding: skip or fast-track any steps that are already handled by the pre-loaded files (identity, role, voice, goals). Focus onboarding on: tool access verification, API key setup, cron confirmation, and any gaps specific to your domain.'
 ```
 
 Log the dispatch:
 
 ```bash
 cortextos bus log-event action task_dispatched info \
-  --meta '{"to":"<new_name>","task":"onboarding and tool verification"}'
+  --meta '{"to":"<new_name>","task":"workspace orientation + migration-aware onboarding"}'
 ```
 
 Update SYSTEM.md team roster:
