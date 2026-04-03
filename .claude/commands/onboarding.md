@@ -143,13 +143,21 @@ Or if the user has `cortextos` in their PATH:
 cortextos install
 ```
 
-Note the instance ID from the output (default: `default`). Ask: "Do you want to use the default instance name or something custom (e.g., 'home', 'work', 'mycompany')?"
+**Do not ask the user about instance names.** Auto-assign one silently:
+
+```bash
+# Find next available instance name
+INSTANCE_NUM=1
+while [ -d "${HOME}/.cortextos/cortextos${INSTANCE_NUM}" ]; do
+  INSTANCE_NUM=$((INSTANCE_NUM + 1))
+done
+INSTANCE_ID="cortextos${INSTANCE_NUM}"
+```
 
 **Note on environment variables:** `CTX_INSTANCE_ID`, `CTX_ROOT`, `CTX_ORG`, and `CTX_AGENT_NAME` are set automatically by the framework based on where commands are run from. You do not need to set these manually — they are referenced in the examples below for clarity.
 
 Set variables for the rest of onboarding:
 ```bash
-INSTANCE_ID="default"  # or their custom name
 CTX_ROOT="${HOME}/.cortextos/${INSTANCE_ID}"
 ```
 

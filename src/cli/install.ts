@@ -95,15 +95,20 @@ export const installCommand = new Command('install')
       }
     }
 
-    // Claude Code auth check
+    // Claude Code auth check — use `claude auth status` which covers all auth methods
     {
-      const configDir = IS_WINDOWS
-        ? join(process.env.APPDATA || homedir(), 'claude')
-        : join(homedir(), '.config', 'claude');
-      const authenticated =
-        existsSync(join(configDir, '.credentials.json')) ||
-        existsSync(join(configDir, 'credentials.json')) ||
-        !!process.env.ANTHROPIC_API_KEY;
+      let authenticated = false;
+      try {
+        const authOutput = execSync('claude auth status', { encoding: 'utf-8', stdio: 'pipe' }).trim();
+        if (authOutput.includes('"loggedIn": true') || authOutput.includes('"loggedIn":true')) {
+          authenticated = true;
+        }
+      } catch {
+        // claude auth status failed — check env var as fallback
+        if (process.env.ANTHROPIC_API_KEY) {
+          authenticated = true;
+        }
+      }
 
       if (!authenticated) {
         console.log('');

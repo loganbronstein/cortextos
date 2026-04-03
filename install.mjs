@@ -247,22 +247,20 @@ if (commandExists('claude')) {
   }
 }
 
-// Check claude authentication
+// Check claude authentication — use `claude auth status` which covers all auth methods (OAuth, API key, etc.)
 {
   let authenticated = false;
   try {
-    // If claude can reach the API it will succeed; --version itself doesn't check auth.
-    // We check for the presence of the auth config file instead.
-    const configDir = IS_WINDOWS
-      ? join(process.env.APPDATA || homedir(), 'claude')
-      : join(homedir(), '.config', 'claude');
-    if (existsSync(join(configDir, '.credentials.json')) ||
-        existsSync(join(configDir, 'credentials.json')) ||
-        existsSync(join(configDir, '.anthropic_api_key')) ||
-        process.env.ANTHROPIC_API_KEY) {
+    const authOutput = run('claude auth status');
+    if (authOutput.includes('"loggedIn": true') || authOutput.includes('"loggedIn":true')) {
       authenticated = true;
     }
-  } catch { /* ignore */ }
+  } catch {
+    // claude auth status failed — check env var as fallback
+    if (process.env.ANTHROPIC_API_KEY) {
+      authenticated = true;
+    }
+  }
 
   if (!authenticated) {
     console.log('');
