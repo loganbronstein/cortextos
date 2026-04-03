@@ -52,8 +52,12 @@ class Daemon {
     // Handle shutdown signals
     const shutdown = async () => {
       console.log('[daemon] Shutting down...');
-      if (this.agentManager) {
-        await this.agentManager.stopAll();
+      try {
+        if (this.agentManager) {
+          await this.agentManager.stopAll();
+        }
+      } catch (err) {
+        console.error('[daemon] Error during shutdown:', err);
       }
       if (this.ipcServer) {
         this.ipcServer.stop();
@@ -66,8 +70,17 @@ class Daemon {
       process.exit(0);
     };
 
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
+    // Wrap in a synchronous handler that catches unhandled promise rejections
+    // so a shutdown error never leaves the process hanging.
+    const handleSignal = () => {
+      shutdown().catch((err) => {
+        console.error('[daemon] Fatal shutdown error:', err);
+        process.exit(1);
+      });
+    };
+
+    process.on('SIGINT', handleSignal);
+    process.on('SIGTERM', handleSignal);
   }
 }
 

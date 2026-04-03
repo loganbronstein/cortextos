@@ -226,12 +226,18 @@ export class AgentManager {
    */
   async restartAgent(name: string): Promise<void> {
     const entry = this.agents.get(name);
-    if (entry) {
-      entry.checker.stop();
+    if (!entry) return;
+
+    entry.checker.stop();
+    try {
       await entry.process.stop();
-      await entry.process.start();
-      entry.checker.start().catch(() => {});
+    } catch (err) {
+      console.error(`[agent-manager] Error stopping ${name} during restart:`, err);
     }
+    await entry.process.start();
+    entry.checker.start().catch((err) => {
+      console.error(`[agent-manager] Fast checker error for ${name}:`, err);
+    });
   }
 
   /**
@@ -240,7 +246,11 @@ export class AgentManager {
   async stopAll(): Promise<void> {
     const names = [...this.agents.keys()];
     for (const name of names) {
-      await this.stopAgent(name);
+      try {
+        await this.stopAgent(name);
+      } catch (err) {
+        console.error(`[agent-manager] Error stopping ${name}:`, err);
+      }
     }
   }
 

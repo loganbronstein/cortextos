@@ -23,6 +23,7 @@ export class AgentProcess {
   private maxCrashesPerDay: number = 10;
   private sessionStart: Date | null = null;
   private status: AgentStatus['status'] = 'stopped';
+  private stopping: boolean = false;
   private dedup: MessageDedup;
   private log: LogFn;
   private onStatusChange: ((status: AgentStatus) => void) | null = null;
@@ -101,23 +102,33 @@ export class AgentProcess {
    * Stop the agent gracefully.
    */
   async stop(): Promise<void> {
+    if (this.stopping) return;
+    this.stopping = true;
     this.log('Stopping...');
     this.clearSessionTimer();
 
-    if (this.pty) {
-      // Send graceful shutdown message
+    // Capture and null out pty BEFORE any awaits so handleExit() during graceful
+    // shutdown doesn't race with us and trigger crash recovery or a double-kill.
+    const pty = this.pty;
+    this.pty = null;
+
+    if (pty) {
       try {
-        this.pty.write('\x03'); // Ctrl-C
+        pty.write('\x03'); // Ctrl-C
         await sleep(1000);
-        this.pty.write('/exit\r');
+        pty.write('/exit\r');
         await sleep(3000);
       } catch {
         // Ignore write errors during shutdown
       }
-      this.pty.kill();
-      this.pty = null;
+      try {
+        pty.kill();
+      } catch {
+        // PTY may have already exited — ignore
+      }
     }
 
+    this.stopping = false;
     this.status = 'stopped';
     this.notifyStatusChange();
     this.log('Stopped');
@@ -128,20 +139,30 @@ export class AgentProcess {
    */
   async sessionRefresh(): Promise<void> {
     this.log('Session refresh (--continue restart)');
+    this.stopping = true;
     this.clearSessionTimer();
 
-    if (this.pty) {
+    // Capture and null out pty before awaits (same race-condition guard as stop()).
+    const pty = this.pty;
+    this.pty = null;
+
+    if (pty) {
       try {
-        this.pty.write('\x03'); // Ctrl-C
+        pty.write('\x03'); // Ctrl-C
         await sleep(1000);
-        this.pty.write('/exit\r');
+        pty.write('/exit\r');
         await sleep(3000);
       } catch {
         // Ignore
       }
-      this.pty.kill();
-      this.pty = null;
+      try {
+        pty.kill();
+      } catch {
+        // PTY may have already exited — ignore
+      }
     }
+
+    this.stopping = false;
 
     // Relaunch with continue mode
     const logPath = join(this.env.ctxRoot, 'logs', this.name, 'stdout.log');
@@ -227,6 +248,9 @@ export class AgentProcess {
   private handleExit(exitCode: number): void {
     this.pty = null;
     this.clearSessionTimer();
+
+    // If stop() is in progress, this exit was intentional — skip crash recovery.
+    if (this.stopping) return;
 
     // Check crash limit
     this.crashCount++;

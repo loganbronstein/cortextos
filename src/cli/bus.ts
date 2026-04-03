@@ -282,13 +282,39 @@ busCommand
 
 busCommand
   .command('self-restart')
-  .description('Plan a self-restart (daemon handles actual restart via IPC)')
+  .description('Immediately restart this agent via daemon IPC (same as soft-restart but targets self)')
   .option('--reason <why>', 'Reason for restart')
-  .action((opts: { reason?: string }) => {
+  .action(async (opts: { reason?: string }) => {
+    const { mkdirSync, writeFileSync } = require('fs');
+    const { join } = require('path');
     const env = resolveEnv();
     const paths = resolvePaths(env.agentName, env.instanceId, env.org);
-    selfRestart(paths, env.agentName, opts.reason);
-    console.log('Restart planned');
+    const reason = opts.reason || 'self-restart requested';
+
+    // Write .user-restart marker (same as soft-restart)
+    const ctxRoot = require('path').join(require('os').homedir(), '.cortextos', env.instanceId);
+    const stateDir = join(ctxRoot, 'state', env.agentName);
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(join(stateDir, '.user-restart'), reason);
+
+    // Also write to restarts.log
+    selfRestart(paths, env.agentName, reason);
+
+    // Send IPC restart-agent signal for self — makes restart immediate
+    const ipc = new IPCClient(env.instanceId);
+    const daemonRunning = await ipc.isDaemonRunning();
+    if (daemonRunning) {
+      const resp = await ipc.send({ type: 'restart-agent', agent: env.agentName });
+      if (resp.success) {
+        console.log(`Restarting ${env.agentName} via daemon IPC`);
+      } else {
+        console.error(`Daemon restart failed: ${resp.error}`);
+        process.exit(1);
+      }
+    } else {
+      console.error('ERROR: Node daemon is not running. Start it with: cortextos start');
+      process.exit(1);
+    }
   });
 
 busCommand
@@ -1124,6 +1150,69 @@ busCommand
       console.error('ERROR: Node daemon is not running. Start it with: cortextos start');
       process.exit(1);
     }
+  });
+
+busCommand
+  .command('soft-restart-all')
+  .description('Soft-restart all enabled agents in the org with optional stagger delay')
+  .option('--stagger <seconds>', 'Seconds between each agent restart', '5')
+  .option('--reason <why>', 'Reason for restart', 'soft-restart-all requested')
+  .action(async (opts: { stagger: string; reason: string }) => {
+    const { mkdirSync, writeFileSync, readFileSync, existsSync } = require('fs');
+    const { join } = require('path');
+    const env = resolveEnv();
+    const ctxRoot = require('path').join(require('os').homedir(), '.cortextos', env.instanceId);
+    const staggerMs = parseInt(opts.stagger, 10) * 1000;
+
+    // Read enabled agents from config
+    const enabledFile = join(ctxRoot, 'config', 'enabled-agents.json');
+    if (!existsSync(enabledFile)) {
+      console.error('ERROR: enabled-agents.json not found at', enabledFile);
+      process.exit(1);
+    }
+    const enabledAgents: Record<string, { enabled: boolean; org?: string }> =
+      JSON.parse(readFileSync(enabledFile, 'utf-8'));
+
+    // Filter to enabled agents in this org (if org set)
+    const targets = Object.entries(enabledAgents)
+      .filter(([, cfg]) => cfg.enabled !== false)
+      .filter(([, cfg]) => !env.org || !cfg.org || cfg.org === env.org)
+      .map(([name]) => name);
+
+    if (targets.length === 0) {
+      console.log('No enabled agents found for org:', env.org || '(all)');
+      process.exit(0);
+    }
+
+    const ipc = new IPCClient(env.instanceId);
+    const daemonRunning = await ipc.isDaemonRunning();
+    if (!daemonRunning) {
+      console.error('ERROR: Node daemon is not running. Start it with: cortextos start');
+      process.exit(1);
+    }
+
+    console.log(`Restarting ${targets.length} agent(s) with ${opts.stagger}s stagger: ${targets.join(', ')}`);
+
+    for (let i = 0; i < targets.length; i++) {
+      const agent = targets[i];
+      if (i > 0) {
+        await new Promise(resolve => setTimeout(resolve, staggerMs));
+      }
+      // Write .user-restart marker
+      const stateDir = join(ctxRoot, 'state', agent);
+      mkdirSync(stateDir, { recursive: true });
+      writeFileSync(join(stateDir, '.user-restart'), opts.reason);
+
+      // Send IPC restart signal
+      const resp = await ipc.send({ type: 'restart-agent', agent });
+      if (resp.success) {
+        console.log(`[${i + 1}/${targets.length}] Restarted ${agent}`);
+      } else {
+        console.error(`[${i + 1}/${targets.length}] Failed to restart ${agent}: ${resp.error}`);
+      }
+    }
+
+    console.log('soft-restart-all complete.');
   });
 
 busCommand
