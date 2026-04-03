@@ -129,10 +129,19 @@ function parseJsonlFile(filePath: string, agent: string, org: string): CostEntry
 
 /**
  * Scan ~/.claude/projects/ for JSONL files and parse them.
+ * Scoped to the current instance's orgs to prevent cross-instance data bleed.
  */
 export function scanClaudeProjectsCosts(): CostEntry[] {
   const claudeDir = path.join(os.homedir(), '.claude', 'projects');
   if (!fs.existsSync(claudeDir)) return [];
+
+  // Import here to avoid circular deps — config imports db
+  const { getOrgs, CTX_FRAMEWORK_ROOT } = require('./config') as typeof import('./config');
+  const allowedOrgs = new Set(getOrgs());
+
+  // Also allow the instance ID itself as a fallback org label
+  const instanceId = process.env.CTX_INSTANCE_ID ?? 'default';
+  allowedOrgs.add(instanceId);
 
   const allEntries: CostEntry[] = [];
 
@@ -144,21 +153,25 @@ export function scanClaudeProjectsCosts(): CostEntry[] {
       // Only scan directories that contain 'agents' in the path (skip unrelated projects)
       if (!dir.name.includes('agents')) continue;
 
+      const parts = dir.name.split('-');
+      const orgsIdx = parts.indexOf('orgs');
+      const orgName = orgsIdx >= 0 && orgsIdx < parts.length - 1
+        ? parts[orgsIdx + 1]
+        : 'default';
+
+      // Scope to current instance's orgs — prevent cross-instance bleed
+      if (!allowedOrgs.has(orgName)) continue;
+
       const projectPath = path.join(claudeDir, dir.name);
       const files = fs.readdirSync(projectPath).filter((f) => f.endsWith('.jsonl'));
 
       for (const file of files) {
         const filePath = path.join(projectPath, file);
         // Extract agent name from encoded dir path (e.g. "-Users-...-agents-devbot" -> "devbot")
-        const parts = dir.name.split('-');
         const agentsIdx = parts.lastIndexOf('agents');
         const agentName = agentsIdx >= 0 && agentsIdx < parts.length - 1
           ? parts.slice(agentsIdx + 1).join('-')
           : dir.name;
-        const orgsIdx = parts.indexOf('orgs');
-        const orgName = orgsIdx >= 0 && orgsIdx < parts.length - 1
-          ? parts[orgsIdx + 1]
-          : 'default';
         const entries = parseJsonlFile(filePath, agentName, orgName);
         allEntries.push(...entries);
       }

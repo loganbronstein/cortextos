@@ -603,3 +603,21 @@ if (pty) {
 - In `dashboard.ts` action, explicitly set `CTX_ROOT`, `CTX_INSTANCE_ID`, and `CTX_FRAMEWORK_ROOT` in the `dashEnv` object passed to `spawn()` — the process already constructs `dashEnv`, just ensure these three vars are included (they currently are, but verify the CLI path is used rather than raw `pm2 start` commands)
 - Add a startup log line: `[dashboard] CTX_ROOT=... CTX_INSTANCE_ID=...` so misconfigurations are immediately visible in logs
 - Document: never start the dashboard via raw `pm2 start "npm start"` without passing env vars explicitly
+
+---
+
+## 43. Messages sent during agent restart are silently lost — no readiness indicator
+
+**What happens:** When an agent restarts (soft or hard), there is no visible indicator that it is booting vs ready to receive messages. Messages sent during the restart window (from session end to fast-checker resuming) are never delivered. No error, no retry, no notification — they disappear silently.
+
+**Severity:** High — users lose messages they believe were sent. No way to know if the agent received the message or is still booting.
+
+**Root cause (likely):** Two contributing factors:
+1. The fast-checker daemon only polls Telegram after the new Claude session fully starts. Messages sent in the gap (from old session teardown to new session boot + fast-checker init) are not queued for delivery.
+2. There is no "agent booting" / "agent ready" status visible to the user in Telegram or the dashboard. The agent goes silent without explanation.
+
+**Fix needed:**
+- On session start, have the agent send a brief "I'm back online" Telegram message (already partly done for some agents, but not enforced)
+- On session end (before restart), send a "restarting, messages in the next ~60s may not reach me" warning
+- Dashboard: show `booting` status in the heartbeat panel for agents with a stale heartbeat (> 1 loop interval old)
+- Consider: have the fast-checker or daemon buffer messages received during restart and replay them once the new session starts
