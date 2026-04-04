@@ -20,6 +20,7 @@ import { dashboardCommand } from './dashboard.js';
 import { tunnelCommand } from './tunnel.js';
 import { getConfigCommand } from './get-config.js';
 import { goalsCommand } from './goals.js';
+import { setupCommand } from './setup.js';
 
 const program = new Command();
 
@@ -47,6 +48,7 @@ program.addCommand(dashboardCommand);
 program.addCommand(tunnelCommand);
 program.addCommand(getConfigCommand);
 program.addCommand(goalsCommand);
+program.addCommand(setupCommand);
 
 // crash-alert: SessionEnd hook — cross-platform replacement for crash-alert.sh
 const crashAlertCommand = new Command('crash-alert')
