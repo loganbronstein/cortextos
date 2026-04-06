@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useOrg } from '@/hooks/use-org';
 import {
   IconLayoutDashboard,
   IconRobot,
@@ -68,6 +69,14 @@ export function Sidebar({
   onSearchClick,
 }: SidebarProps) {
   const pathname = usePathname();
+  const { currentOrg } = useOrg();
+
+  function orgHref(href: string) {
+    if (currentOrg && currentOrg !== 'all') {
+      return `${href}${href.includes('?') ? '&' : '?'}org=${encodeURIComponent(currentOrg)}`;
+    }
+    return href;
+  }
 
   function isActive(href: string) {
     if (href === '/') return pathname === '/';
@@ -130,7 +139,7 @@ export function Sidebar({
                 return (
                   <Link
                     key={item.href}
-                    href={item.href}
+                    href={orgHref(item.href)}
                     onClick={onNavigate}
                     className={cn(
                       'group flex items-center gap-2.5 rounded-md px-3 py-1.5 text-[13px] transition-all',
@@ -168,7 +177,7 @@ export function Sidebar({
       {/* Settings at bottom */}
       <div className="px-2 py-2">
         <Link
-          href="/settings"
+          href={orgHref('/settings')}
           onClick={onNavigate}
           className={cn(
             'flex items-center gap-2.5 rounded-md px-3 py-1.5 text-[13px] transition-all',

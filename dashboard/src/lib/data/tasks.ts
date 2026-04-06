@@ -17,8 +17,14 @@ export function getTasks(filters?: TaskFilters): Task[] {
     params.push(filters.org);
   }
   if (filters?.agent) {
-    conditions.push('assignee = ?');
-    params.push(filters.agent);
+    // 'human' is a virtual filter: returns tasks assigned to any non-agent human
+    // (agents create human tasks with assigned_to 'james', 'user', 'human', etc.)
+    if (filters.agent === 'human') {
+      conditions.push("(assignee IN ('human', 'user', 'james') OR title LIKE '[HUMAN]%')");
+    } else {
+      conditions.push('assignee = ?');
+      params.push(filters.agent);
+    }
   }
   if (filters?.priority) {
     conditions.push('priority = ?');

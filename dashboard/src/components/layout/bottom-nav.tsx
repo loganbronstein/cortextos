@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useOrg } from '@/hooks/use-org';
 import {
   IconLayoutDashboard,
   IconListCheck,
@@ -42,6 +43,14 @@ const morePages = [
 export function BottomNav() {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
+  const { currentOrg } = useOrg();
+
+  function orgHref(href: string) {
+    if (currentOrg && currentOrg !== 'all') {
+      return `${href}${href.includes('?') ? '&' : '?'}org=${encodeURIComponent(currentOrg)}`;
+    }
+    return href;
+  }
 
   function isActive(href: string) {
     if (href === '/') return pathname === '/';
@@ -73,7 +82,7 @@ export function BottomNav() {
                 return (
                   <Link
                     key={page.href}
-                    href={page.href}
+                    href={orgHref(page.href)}
                     onClick={() => setMoreOpen(false)}
                     className={cn(
                       'flex flex-col items-center gap-1 rounded-lg py-3 transition-colors',
@@ -99,7 +108,7 @@ export function BottomNav() {
             return (
               <Link
                 key={tab.href}
-                href={tab.href}
+                href={orgHref(tab.href)}
                 className={cn(
                   'flex flex-col items-center justify-center gap-0.5 flex-1 h-full transition-colors',
                   active ? 'text-primary' : 'text-muted-foreground'
