@@ -472,10 +472,13 @@ export async function registerTelegramCommands(
   }
 
   try {
+    // Register under all_private_chats scope so the / menu appears in private bot chats.
+    // The default scope alone is insufficient — Telegram shows commands from the most
+    // specific matching scope, and all_private_chats takes precedence over default.
     const response = await fetch(`https://api.telegram.org/bot${botToken}/setMyCommands`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ commands }),
+      body: JSON.stringify({ commands, scope: { type: 'all_private_chats' } }),
     });
 
     const data = await response.json() as { ok: boolean; description?: string };
