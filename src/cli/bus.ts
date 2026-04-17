@@ -1999,11 +1999,12 @@ busCommand
 
 // --- fix-agent-settings ---
 
-program
+busCommand
   .command('fix-agent-settings')
   .description('Patch all agent settings.json files to include the full recommended permissions allow list')
   .option('--dry-run', 'Show what would be changed without writing')
   .action((opts: { dryRun?: boolean }) => {
+    const { existsSync: fsExists, readdirSync: fsReaddir, readFileSync: fsRead, writeFileSync: fsWrite } = require('fs');
     const env = resolveEnv();
     const frameworkRoot = env.frameworkRoot || process.cwd();
     const orgsDir = join(frameworkRoot, 'orgs');
@@ -2016,7 +2017,7 @@ program
       'Skill', 'Agent',
     ];
 
-    if (!existsSync(orgsDir)) {
+    if (!fsExists(orgsDir)) {
       console.error('orgs/ directory not found at', orgsDir);
       process.exit(1);
     }
@@ -2024,16 +2025,16 @@ program
     let patched = 0;
     let skipped = 0;
 
-    for (const org of readdirSync(orgsDir)) {
+    for (const org of fsReaddir(orgsDir)) {
       const agentsDir = join(orgsDir, org, 'agents');
-      if (!existsSync(agentsDir)) continue;
-      for (const agent of readdirSync(agentsDir)) {
+      if (!fsExists(agentsDir)) continue;
+      for (const agent of fsReaddir(agentsDir)) {
         const settingsPath = join(agentsDir, agent, '.claude', 'settings.json');
-        if (!existsSync(settingsPath)) continue;
+        if (!fsExists(settingsPath)) continue;
 
         let settings: any;
         try {
-          settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+          settings = JSON.parse(fsRead(settingsPath, 'utf-8'));
         } catch {
           console.warn(`  SKIP ${agent}: could not parse settings.json`);
           skipped++;
@@ -2055,8 +2056,9 @@ program
 
         if (opts.dryRun) {
           console.log(`  DRY  ${agent}: would add [${missing.join(', ')}]`);
+          patched++;
         } else {
-          writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+          fsWrite(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
           console.log(`  FIX  ${agent}: added [${missing.join(', ')}]`);
           patched++;
         }
