@@ -175,10 +175,6 @@ export interface AgentConfig {
     soft_pct?: number;
     hard_pct?: number;
   };
-  crash_window?: {
-    seconds?: number;
-    max_crashes?: number;
-  };
 }
 
 export interface CronEntry {

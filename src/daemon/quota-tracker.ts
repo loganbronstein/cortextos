@@ -59,6 +59,11 @@ export class QuotaTracker {
     return this.check();
   }
 
+  /**
+   * Returns the current quota status. Note: once `hard_blocked` fires, subsequent
+   * calls return `{ status: 'ok' }` — the block does not re-emit. Always call
+   * `isBlocked()` alongside `check()` to gate execution when hard-block is a concern.
+   */
   check(): QuotaCheckResult {
     this.ensureFreshDay();
     const pct = (this.state.spent_usd / this.config.daily_budget_usd) * 100;
