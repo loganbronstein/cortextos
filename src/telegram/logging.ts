@@ -12,18 +12,12 @@ import { join, dirname } from 'path';
  * Fields are all optional so existing callers that pass nothing still
  * produce the same JSONL shape as before this extension.
  *
- * - `parseMode`: which parse_mode the first send attempt used. "markdown"
- *   for the default path, "none" when the caller used --plain-text.
- * - `parseFallback`: true iff the first attempt failed with a Telegram
- *   parse-entities error and sendMessage retried with parse_mode omitted.
- * - `parseFallbackReason`: the Telegram error description that triggered
- *   the fallback, when present. Useful for auditing which agents keep
- *   generating bad markdown so we can target them for hardening.
+ * - `parseMode`: which parse_mode the first send attempt used. "html"
+ *   for the default path (Markdown-to-HTML conversion), "none" when the
+ *   caller used --plain-text.
  */
 export interface OutboundLogMetadata {
-  parseMode?: 'markdown' | 'none';
-  parseFallback?: boolean;
-  parseFallbackReason?: string;
+  parseMode?: 'html' | 'none';
 }
 
 /**
