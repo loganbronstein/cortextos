@@ -39,9 +39,6 @@ export function logOutboundMessage(
   // stays unchanged for callers that pass nothing (backwards compat).
   const meta: Record<string, unknown> = {};
   if (metadata?.parseMode !== undefined) meta.parse_mode = metadata.parseMode;
-  if (metadata?.parseFallback !== undefined) meta.parse_fallback = metadata.parseFallback;
-  if (metadata?.parseFallbackReason !== undefined)
-    meta.parse_fallback_reason = metadata.parseFallbackReason;
 
   const entry = JSON.stringify({
     timestamp: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
