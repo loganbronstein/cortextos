@@ -49,7 +49,7 @@ export function splitForTelegram(text: string, maxLen: number = TELEGRAM_MAX_LEN
     // Paragraph break — split lands AFTER the "\n\n" so both newlines
     // stay with the prior chunk.
     const paraIdx = text.lastIndexOf('\n\n', windowEnd - 1);
-    if (paraIdx >= minSplit) candidates.push(paraIdx + 2);
+    if (paraIdx >= minSplit && paraIdx + 2 <= windowEnd) candidates.push(paraIdx + 2);
 
     // Single newline.
     const nlIdx = text.lastIndexOf('\n', windowEnd - 1);
