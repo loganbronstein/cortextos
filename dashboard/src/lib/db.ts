@@ -149,6 +149,20 @@ function initializeSchema(db: Database.Database): void {
       reset_at INTEGER NOT NULL
     );
 
+    -- Context entries: structured notes + decisions + insights logged by James
+    -- and agents. Separate from events (which are ephemeral system signals) —
+    -- these are intentional write-ups meant for retrieval across sessions.
+    CREATE TABLE IF NOT EXISTS context_entries (
+      id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      author TEXT NOT NULL,
+      agent TEXT,
+      topic_tags TEXT,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      references_json TEXT
+    );
+
     -- Indexes for common queries
     CREATE INDEX IF NOT EXISTS idx_tasks_org ON tasks(org);
     CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
@@ -173,6 +187,10 @@ function initializeSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_messages_to ON messages(to_agent);
     CREATE INDEX IF NOT EXISTS idx_messages_org ON messages(org);
     CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+
+    CREATE INDEX IF NOT EXISTS idx_context_entries_created ON context_entries(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_context_entries_agent ON context_entries(agent);
+    CREATE INDEX IF NOT EXISTS idx_context_entries_author ON context_entries(author);
   `);
 }
 
