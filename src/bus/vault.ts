@@ -135,6 +135,13 @@ export function publishToVault(
     if (!existsSync(taskFile)) {
       throw new Error(`Task not found: ${taskId} (looked at ${taskFile})`);
     }
+    // Defend against a planted directory / symlink / FIFO named `<id>.json`.
+    const taskStat = lstatSync(taskFile);
+    if (!taskStat.isFile()) {
+      throw new Error(
+        `Task file is not a regular file: ${taskFile}`,
+      );
+    }
   }
 
   const sourceBuffer = readSourceFile(sourcePath);
