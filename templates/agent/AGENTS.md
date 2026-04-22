@@ -190,6 +190,53 @@ TARGET: Every significant piece of work (>10 minutes) = at least 1 task created.
 
 ---
 
+## Plan-First Review (Logan directive 2026-04-22, from Bradley Banner)
+
+Every non-trivial task (3+ file changes, new feature, architecture decision, research with decisions to make) runs a plan review BEFORE execution:
+
+1. **Verbalize understanding** of the task in your own words. 2-4 sentences. Name ambiguities; do not silently pick an interpretation.
+2. **Draft a plan**: numbered steps, file list with what changes in each, acceptance criteria.
+3. **Spawn a 10-persona reviewer panel** on the plan (not the code). Default roles:
+   1. Security — attack surface, secrets, authz, injection
+   2. Performance — hot path, N+1, memory, O(n^2)
+   3. UX — user-visible behavior, errors, reversibility
+   4. Data integrity — migrations, backfills, invariants, races
+   5. Architecture — coupling, boundary fit, abstraction level
+   6. Maintainability — future readers, naming, dead branches
+   7. Testing — what stays untested, test-to-change ratio
+   8. Product fit — does this solve the stated need
+   9. Devops / deploy — rollout, rollback, blast radius
+   10. Skeptic — is the premise wrong, is there a simpler alternative
+4. **Moderator pass** consolidates: MUST FIX / SHOULD FIX / NICE TO HAVE. On deadlock (two personas contradict), moderator picks the safer direction and logs the tradeoff in the revised plan.
+5. **Revise the plan**; re-run the panel only if the revision changed the approach, not if it only tightened details.
+6. **Execute** the approved plan.
+7. **Post-execution**: adversarial review on the diff + codex:rescue + callsite verification (`grep` every new symbol; count outside tests >= 1) + merge.
+
+**Trivial-task exception:** 1-2 line fix, typo, doc micro-edit, dep version bump with no API surface change. Skip plan review, go direct to Execute + standard adversarial. Default to "not trivial" when in doubt.
+
+**Blast-radius denylist (trivial never applies here):** any touch to `config/`, `migrations/`, `infra/`, `secrets/`, `auth/`, `crypto/`, `iam/`, `billing/`, `*.sql`, `*.tf`, files under any `deploy/` tree, feature-flag files, or a crypto constant forces plan review regardless of line count. A one-line change to a rate limit, a feature-flag default, or a crypto constant is not trivial.
+
+**Anti-gaming:** calling a multi-file task "trivial" to skip plan review is a guardrail violation. Reviewers flag any PR that touched 3+ files, introduced new symbols, or touched the blast-radius denylist but skipped plan review.
+
+**Panel failure modes (specified, not left to the agent):**
+- Quorum: 8 of 10 personas must return a review for the panel to be valid. Security and Data Integrity are mandatory; their absence blocks.
+- Timeout: each persona has a hard wall clock (default 2 min). On timeout, retry once. Second timeout counts as "no signal, low confidence" against quorum.
+- Fail-closed: quorum not met = execution blocks, not skips.
+
+**Deadlock ranking:** when two personas contradict, the moderator picks by this axis order: data integrity > security > availability > performance > UX > maintainability. Moderator must name which axis won and why. Same-tier deadlock escalates to a human.
+
+**Moderator attribution:** every MUST / SHOULD / NICE item must cite the persona(s) that raised it. Moderator-originated items are flagged and require either a persona to adopt the concern or a human sign-off before they count.
+
+**MUST-FIX reproducer rule:** a MUST-FIX must name a concrete failure scenario (input, state, expected-vs-actual) or a test that would catch it. A MUST without a reproducer downgrades to SHOULD. This kills rubber-stamp MUSTs.
+
+**Revision loop cap:** at most 2 revision rounds. Round 3 escalates to human or ships with unresolved items logged as known risks on the PR.
+
+**Cost honesty:** plan review costs ~10 reviewer passes + 1 moderator pass per non-trivial task. A reject-and-rebuild loop (wrong direction caught post-merge) costs 3x to 5x that. Breakeven: plan review pays for itself if it prevents one wrong PR in every 3-5. Definition of "wrong PR" for measurement: reverted within 7 days OR required a follow-up fix PR within 48h OR caused a P0 or P1 incident. Analyst logs plan-review cost per task and reviews the ratio at month 3; rule kills itself if breakeven is not hit.
+
+Full template and worked examples: `scripts/worker-dispatch-template.md` in the cortextos repo.
+
+---
+
 ## Blocked Tasks, Human Tasks, and Approvals
 
 Three distinct states when you cannot proceed. Use the right one.
