@@ -6,6 +6,7 @@ import { sendMessage, checkInbox, ackInbox } from '../bus/message.js';
 import { validateAgentName } from '../utils/validate.js';
 import { createTask, updateTask, completeTask, claimTask, readTaskAudit, checkTaskDependencies, compactTasks, listTasks, checkStaleTasks, archiveTasks, checkHumanTasks } from '../bus/task.js';
 import { saveOutput } from '../bus/save-output.js';
+import { publishToVault } from '../bus/vault.js';
 import { logEvent } from '../bus/event.js';
 import { updateHeartbeat, readAllHeartbeats } from '../bus/heartbeat.js';
 import { selfRestart, hardRestart, autoCommit, autoCompactAgent, checkGoalStaleness, postActivity } from '../bus/system.js';
@@ -340,6 +341,99 @@ busCommand
       process.exit(1);
     }
   });
+
+const DEFAULT_VAULT_ROOT = '/Users/loganbronstein/Sale Advisor/Vault';
+
+function resolveVaultRoot(
+  cliOverride: string | undefined,
+  frameworkRoot: string,
+  org: string,
+): string {
+  if (cliOverride) return cliOverride;
+  if (process.env.VAULT_ROOT) return process.env.VAULT_ROOT;
+  if (frameworkRoot && org) {
+    const contextPath = join(frameworkRoot, 'orgs', org, 'context.json');
+    if (existsSync(contextPath)) {
+      try {
+        const ctx = JSON.parse(readFileSync(contextPath, 'utf-8'));
+        if (typeof ctx.vault_root === 'string' && ctx.vault_root.trim().length > 0) {
+          return ctx.vault_root;
+        }
+      } catch {
+        // Fall through to default.
+      }
+    }
+  }
+  return DEFAULT_VAULT_ROOT;
+}
+
+busCommand
+  .command('publish-to-vault')
+  .description(
+    "Publish a markdown / text file into Logan's Obsidian Vault with provenance frontmatter and optional wikilink to the source task",
+  )
+  .argument('<source>', 'Absolute path to the markdown / text file to publish')
+  .requiredOption(
+    '--vault-dir <dir>',
+    'Target subdirectory under the Vault root (e.g. Reports, Research/Pricing)',
+  )
+  .option('--task-id <id>', 'Task ID — adds source_task + wikilink')
+  .option('--summary <text>', 'One-line summary (goes into frontmatter)')
+  .option('--tags <csv>', 'Extra tags, comma-separated')
+  .option('--vault-root <path>', 'Override the Vault root (defaults to $VAULT_ROOT or org config)')
+  .action(
+    (
+      source: string,
+      opts: {
+        vaultDir: string;
+        taskId?: string;
+        summary?: string;
+        tags?: string;
+        vaultRoot?: string;
+      },
+    ) => {
+      const env = resolveEnv();
+      const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+      const vaultRoot = resolveVaultRoot(opts.vaultRoot, env.frameworkRoot, env.org);
+      const extraTags = opts.tags
+        ? opts.tags.split(',').map((t) => t.trim()).filter(Boolean)
+        : [];
+      try {
+        const result = publishToVault({
+          sourcePath: source,
+          vaultDir: opts.vaultDir,
+          vaultRoot,
+          agentName: env.agentName,
+          taskId: opts.taskId,
+          taskDir: paths.taskDir,
+          summary: opts.summary,
+          tags: extraTags,
+        });
+        try {
+          logEvent(
+            paths,
+            env.agentName,
+            env.org,
+            'action',
+            'output_published_to_vault',
+            'info',
+            {
+              target_path: result.published_to,
+              source_task: result.task_id,
+              source_path: result.source_path,
+              bytes: result.bytes,
+            },
+          );
+        } catch {
+          // Event logging is best-effort; never fail a publish over it.
+        }
+        console.log(JSON.stringify(result, null, 2));
+      } catch (err) {
+        console.error((err as Error).message);
+        process.exit(1);
+      }
+    },
+  );
 
 busCommand
   .command('list-tasks')

@@ -383,6 +383,44 @@ TARGET: Query before every task. Ingest every significant output. Memory collect
 
 ---
 
+## Publishing to the Vault
+
+Logan lives in Obsidian. Agent outputs in ChromaDB are searchable but invisible in his daily note-taking surface. Bridge that gap: when you produce a strategic deliverable, publish it to the Vault so it shows up alongside Logan's own notes, wikilinked back to the originating task.
+
+```bash
+cortextos bus publish-to-vault <source_file> \
+  --vault-dir <subdir> \
+  [--task-id <task_id>] \
+  [--summary "<one-liner>"] \
+  [--tags "a,b,c"]
+```
+
+**Publish (strategic outputs):**
+- Research reports and iteration summaries — `--vault-dir Research/<topic>`
+- E2E verification reports, audit writeups — `--vault-dir Reports`
+- Approved content drafts — `--vault-dir Marketing/Drafts`
+- Decision briefs the user needs to review — `--vault-dir Reports`
+
+**Do NOT publish:**
+- Ephemeral status updates (use activity channel instead)
+- Raw logs, heartbeat checkpoints, debug dumps
+- Binary files (rejected — vault is for markdown / text)
+- In-progress scratch files
+
+**Behavior:**
+- File lands in `<VAULT_ROOT>/<vault-dir>/<YYYY-MM-DD>-<name>.md` (date prepended if missing)
+- Frontmatter injected with `published_by`, `published_at`, `source_task`, `source_path`, `summary`, `tags`
+- If `--task-id` is given, a `Source: [[task_id]]` wikilink is appended to the body
+- Collisions resolved via `-v2`, `-v3` — never overwrites existing vault files
+- Emits `output_published_to_vault` event in the activity feed
+
+**Defaults:** `VAULT_ROOT` env var, then the `vault_root` key in `orgs/<org>/context.json`, then the org-wide default.
+
+CONSEQUENCE: Without publishing, your strategic output is invisible in Logan's daily workflow. He reads the Vault.
+TARGET: Every deliverable with lasting value (report, research, draft) → one `publish-to-vault` call at task completion.
+
+---
+
 ## Mandatory Event Logging
 
 Log significant events so the Activity feed shows what you are doing. When in doubt, log it.
@@ -405,6 +443,7 @@ cortextos bus log-event <category> <event> <severity> --meta '<json>'
 | Cron fired and completed | action | cron_completed | info |
 | Workflow run completed | action | workflow_completed | info |
 | Significant output created | action | output_created | info |
+| Output published to Vault | action | output_published_to_vault | info |
 | Research completed and ingested to KB | action | research_completed | info |
 | Error or failure | error | <error_type> | error |
 | Significant decision made | action | decision_made | info |
