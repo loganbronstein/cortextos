@@ -13,6 +13,20 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
+# Plan-First Review gate: enforces the rule codified by PR #216 at push time
+# (W9b follow-up). Runs BEFORE build/test so we fail fast on missing plan
+# rather than waiting for a 2-minute test run to finish first. Skipped on
+# protected branches and via PLAN_REVIEW_BYPASS=true.
+if [[ -x "$REPO_ROOT/scripts/plan-review-gate.sh" ]]; then
+  echo "[pre-push] Running plan-review gate..."
+  if ! "$REPO_ROOT/scripts/plan-review-gate.sh"; then
+    echo "" >&2
+    echo "[pre-push] Plan-First Review gate failed. Coaching above." >&2
+    echo "[pre-push] Push aborted." >&2
+    exit 1
+  fi
+fi
+
 echo "[pre-push] Running build..."
 if ! npm run build --silent; then
   echo ""

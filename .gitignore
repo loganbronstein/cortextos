@@ -1,8 +1,12 @@
 node_modules/
-.claude/
+.claude/*
 !.claude/commands/
 !.claude/commands/**
 !.claude/orchestration-cortextos-node/
+# Plan-First Review files are tracked so the pre-push gate finds them in
+# every clone, and so reviewers see the plan in the PR diff.
+!.claude/plan-reviews/
+!.claude/plan-reviews/**
 # Include template .claude dirs (needed for agent settings.json)
 !templates/**/.claude/
 !templates/**/.claude/**
