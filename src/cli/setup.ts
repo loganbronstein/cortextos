@@ -70,10 +70,18 @@ function runCli(cwd: string, args: string[], label: string): boolean {
   return true;
 }
 
-function writeAgentEnv(agentDir: string, botToken: string, chatId: string): void {
+function writeAgentEnv(agentDir: string, botToken: string, chatId: string, allowedUser?: string): void {
   const envPath = join(agentDir, '.env');
-  const content = `BOT_TOKEN=${botToken}\nCHAT_ID=${chatId}\n`;
-  writeFileSync(envPath, content, 'utf-8');
+  const lines = [
+    `BOT_TOKEN=${botToken}`,
+    `CHAT_ID=${chatId}`,
+    // ALLOWED_USER is required by the daemon when BOT_TOKEN is set —
+    // without it the security gate disables Telegram silently. Always
+    // emit the field (empty if unknown) so the user knows to fill it.
+    `ALLOWED_USER=${allowedUser ?? ''}`,
+    '',
+  ];
+  writeFileSync(envPath, lines.join('\n'), 'utf-8');
   try { chmodSync(envPath, 0o600); } catch { /* ignore on Windows */ }
 }
 
@@ -228,6 +236,16 @@ export const setupCommand = new Command('setup')
       orchChatId = await askRequired(iface, '  Enter your Telegram chat ID manually: ', 'Chat ID is required.');
     }
 
+    // ALLOWED_USER: daemon refuses to enable Telegram without it (security
+    // — anyone who finds the bot @handle could otherwise control the agent).
+    // Default to the chat ID since for personal bots they are usually the same;
+    // user can override.
+    console.log('\n  ALLOWED_USER: your numeric Telegram user ID. The daemon refuses');
+    console.log('  to enable Telegram without it (security: prevents anyone who finds');
+    console.log('  the bot @handle from controlling the agent). For personal bots this');
+    console.log('  is usually the same as your chat ID. Get yours by messaging @userinfobot.\n');
+    const orchAllowedUser = await askDefault(iface, '  Your Telegram user ID', orchChatId);
+
     // Create orchestrator agent
     const addOrchOk = runCli(
       projectRoot,
@@ -242,7 +260,7 @@ export const setupCommand = new Command('setup')
 
     // Write .env
     const orchDir = join(projectRoot, 'orgs', orgName, 'agents', orchName);
-    writeAgentEnv(orchDir, orchToken, orchChatId);
+    writeAgentEnv(orchDir, orchToken, orchChatId, orchAllowedUser);
     console.log(`  Wrote .env for ${orchName}`);
 
     // Enable orchestrator
@@ -300,6 +318,11 @@ export const setupCommand = new Command('setup')
         agentChatId = await askRequired(iface, `  Enter chat ID for ${agentName} manually: `, 'Chat ID is required.');
       }
 
+      // Default ALLOWED_USER to chat ID (typical for personal bots) — same
+      // pattern as the orchestrator step. Re-prompt explanation kept brief
+      // since the user already saw the long version on the orchestrator.
+      const agentAllowedUser = await askDefault(iface, `  ALLOWED_USER for ${agentName} (numeric Telegram user ID)`, agentChatId);
+
       const addOk = runCli(
         projectRoot,
         ['add-agent', agentName, '--template', template, '--org', orgName, '--instance', instanceId],
@@ -308,7 +331,7 @@ export const setupCommand = new Command('setup')
 
       if (addOk) {
         const agentDir = join(projectRoot, 'orgs', orgName, 'agents', agentName);
-        writeAgentEnv(agentDir, agentToken, agentChatId);
+        writeAgentEnv(agentDir, agentToken, agentChatId, agentAllowedUser);
         console.log(`  Wrote .env for ${agentName}`);
 
         runCli(projectRoot, ['enable', agentName, '--org', orgName, '--instance', instanceId], `enable ${agentName}`);

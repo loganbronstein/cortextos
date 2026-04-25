@@ -15,6 +15,59 @@ function commandExists(cmd: string): boolean {
   return result.status === 0;
 }
 
+/**
+ * Sanity-check the agent's .env for the silent-Telegram-disable trap:
+ * BOT_TOKEN set + ALLOWED_USER missing → daemon refuses to enable
+ * Telegram (security: prevents anyone who finds the bot @handle from
+ * controlling the agent), but the warning lands in the daemon log where
+ * users never see it. Returns the list of missing fields so the CLI can
+ * print a user-visible warning before delegating to the daemon.
+ *
+ * Pure function (input is the .env file content as a string) so it can
+ * be unit-tested without a filesystem fixture.
+ */
+export function checkTelegramEnvCompleteness(envContent: string): { warn: boolean; missing: string[] } {
+  const grab = (key: string): string => {
+    const m = envContent.match(new RegExp(`^${key}=(.*)$`, 'm'));
+    return (m?.[1] ?? '').trim();
+  };
+  const botToken = grab('BOT_TOKEN');
+  const allowedUser = grab('ALLOWED_USER');
+  const chatId = grab('CHAT_ID');
+  // Only warn when BOT_TOKEN is actually set. An agent without Telegram
+  // is a valid configuration; we don't badger the user about it.
+  if (!botToken) return { warn: false, missing: [] };
+  const missing: string[] = [];
+  if (!allowedUser) missing.push('ALLOWED_USER');
+  if (!chatId) missing.push('CHAT_ID');
+  return { warn: missing.length > 0, missing };
+}
+
+/**
+ * Best-effort .env preflight for `cortextos start <agent>`. Reads the
+ * agent's .env and prints a user-visible warning if the silent-Telegram-
+ * disable trap is set. Never blocks the start.
+ */
+function warnIfTelegramIncomplete(agentDir: string, agentName: string): void {
+  const envPath = join(agentDir, '.env');
+  if (!existsSync(envPath)) return;
+  let raw: string;
+  try { raw = readFileSync(envPath, 'utf-8'); } catch { return; }
+  const check = checkTelegramEnvCompleteness(raw);
+  if (!check.warn) return;
+  const fields = check.missing.join(' + ');
+  console.warn('');
+  console.warn(`  ⚠ Telegram disabled for ${agentName}: ${fields} not set in .env`);
+  console.warn('    BOT_TOKEN is configured but the daemon will refuse to enable Telegram');
+  console.warn('    (security: anyone who finds the bot @handle could otherwise control the agent).');
+  console.warn(`    Fix: edit the .env at ${envPath} and set ${fields}.`);
+  if (check.missing.includes('ALLOWED_USER')) {
+    console.warn('    Get your numeric user ID by messaging @userinfobot on Telegram.');
+  }
+  console.warn(`    Then re-run: cortextos start ${agentName}`);
+  console.warn('');
+}
+
 export const startCommand = new Command('start')
   .argument('[agent]', 'Specific agent to start (starts all if omitted)')
   .option('--instance <id>', 'Instance ID', 'default')
@@ -165,6 +218,23 @@ export const startCommand = new Command('start')
         mkdirSync(join(ctxRoot, 'config'), { recursive: true });
         writeFileSync(enabledPath, JSON.stringify(enabledAgents, null, 2) + '\n', 'utf-8');
         console.log(`  Registered ${agent} in enabled-agents.json`);
+      }
+
+      // Pre-flight .env check — surface the silent-Telegram-disable trap
+      // BEFORE delegating to the daemon, so users see the warning in their
+      // terminal instead of having to grep ~/.pm2/logs.
+      const ctxRootForOrg = join(homedir(), '.cortextos', options.instance);
+      const enabledForOrg: Record<string, any> = (() => {
+        const p = join(ctxRootForOrg, 'config', 'enabled-agents.json');
+        if (!existsSync(p)) return {};
+        try { return JSON.parse(readFileSync(p, 'utf-8')); } catch { return {}; }
+      })();
+      const orgForAgent = enabledForOrg[agent]?.org;
+      if (orgForAgent) {
+        const candidateAgentDir = join(process.cwd(), 'orgs', orgForAgent, 'agents', agent);
+        if (existsSync(candidateAgentDir)) {
+          warnIfTelegramIncomplete(candidateAgentDir, agent);
+        }
       }
 
       console.log(`Starting agent: ${agent}`);
