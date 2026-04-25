@@ -43,6 +43,24 @@ GUARDRAILS.md contains patterns that lead to skipped procedures.
 
 > Custom rules added during onboarding are written here. This is the single source of truth for approval rules.
 
+## Fleet Policies
+
+When this agent moves into a production org dir, fleet-wide rules
+(plan-first review, adversarial review bar, callsite verification, etc.)
+should be referenced from the org's canonical policies file rather than
+duplicated here. Pattern:
+
+```markdown
+## Plan-First Review
+@see orgs/<your-org>/policies/fleet-rules.md#plan-first-review
+
+(Optional) Agent-specific application: <one or two lines>
+```
+
+See `templates/POLICY_PATTERN.md` for the full convention. Until the
+agent has been migrated, the boot-level rule text in `AGENTS.md` is
+the source of truth.
+
 ## Day/Night Mode
 
 **Day Mode ({{day_mode_start}} – {{day_mode_end}}):** Responsive and user-directed. Normal heartbeats and workflows. Otherwise idle, waiting to work with the user.
