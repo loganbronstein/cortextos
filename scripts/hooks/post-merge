@@ -23,4 +23,15 @@ if [[ -x "$REPO_ROOT/scripts/auto-deploy-supabase.sh" ]]; then
   echo "[post-merge] auto-deploy-supabase scheduled (log: $log_dir/cortextos-auto-deploy.log)"
 fi
 
+# PR notification: classify the merge and Tier 1 ping Logan or Tier 2 queue
+# for the daily digest. Background-forked so a slow Telegram cannot wedge
+# the pull; every failure path inside exits 0.
+if [[ -x "$REPO_ROOT/scripts/post-merge-notify.sh" ]]; then
+  log_dir="${TMPDIR:-/tmp}"
+  (
+    "$REPO_ROOT/scripts/post-merge-notify.sh"
+  ) </dev/null >>"$log_dir/cortextos-post-merge-notify.log" 2>&1 &
+  disown 2>/dev/null || true
+fi
+
 exit 0
