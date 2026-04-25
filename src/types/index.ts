@@ -405,7 +405,13 @@ export interface IPCRequest {
 
 // Worker Types
 
-export type WorkerStatusValue = 'starting' | 'running' | 'completed' | 'failed';
+export type WorkerStatusValue =
+  | 'starting'
+  | 'running'
+  | 'suspending'
+  | 'suspended'
+  | 'completed'
+  | 'failed';
 
 export interface WorkerStatus {
   name: string;
@@ -415,6 +421,18 @@ export interface WorkerStatus {
   parent?: string;
   spawnedAt: string;
   exitCode?: number;
+  suspendedAt?: string;
+  snapshotPath?: string;
+}
+
+export interface SuspendedWorkerRecord {
+  name: string;
+  dir: string;
+  parent?: string;
+  originalPrompt: string;
+  snapshotPath: string;
+  suspendedAt: string;
+  reason: 'idle' | 'timeout';
 }
 
 export interface IPCResponse {

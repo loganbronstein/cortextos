@@ -44,7 +44,7 @@ export class IPCServer {
           try {
             const request: IPCRequest = JSON.parse(data);
             data = '';
-            this.handleRequest(request, socket);
+            this.handleRequest(request, socket).catch(() => { /* logged inside */ });
           } catch {
             // Incomplete JSON, wait for more data
           }
@@ -105,7 +105,7 @@ export class IPCServer {
   /**
    * Handle an incoming IPC request.
    */
-  private handleRequest(request: IPCRequest, socket: Socket): void {
+  private async handleRequest(request: IPCRequest, socket: Socket): Promise<void> {
     // BUG-015: log every incoming IPC request with its source so we can
     // trace which CLI command triggered which daemon action. The source
     // field is populated by CLI clients (cortextos enable / disable / stop
@@ -231,6 +231,47 @@ export class IPCServer {
           }
           break;
         }
+
+        case 'suspend-worker': {
+          const d = request.data as { name?: string; timeoutMs?: number } | undefined;
+          if (!d?.name) {
+            response = { success: false, error: 'suspend-worker requires: name' };
+          } else if (!WORKER_NAME_REGEX.test(d.name) || d.name.length > 64) {
+            response = { success: false, error: 'Invalid worker name' };
+          } else {
+            const timeoutMs = typeof d.timeoutMs === 'number' && d.timeoutMs > 0 && d.timeoutMs <= 600_000
+              ? d.timeoutMs
+              : 30_000;
+            try {
+              const result = await this.agentManager.suspendWorker(d.name, timeoutMs);
+              response = { success: true, data: result };
+            } catch (err) {
+              response = { success: false, error: (err as Error).message };
+            }
+          }
+          break;
+        }
+
+        case 'resume-worker': {
+          const d = request.data as { name?: string } | undefined;
+          if (!d?.name) {
+            response = { success: false, error: 'resume-worker requires: name' };
+          } else if (!WORKER_NAME_REGEX.test(d.name) || d.name.length > 64) {
+            response = { success: false, error: 'Invalid worker name' };
+          } else {
+            try {
+              await this.agentManager.resumeWorker(d.name);
+              response = { success: true, data: `Resumed worker ${d.name}` };
+            } catch (err) {
+              response = { success: false, error: (err as Error).message };
+            }
+          }
+          break;
+        }
+
+        case 'list-suspended-workers':
+          response = { success: true, data: this.agentManager.listSuspendedWorkers() };
+          break;
 
         default:
           response = { success: false, error: `Unknown command: ${request.type}` };

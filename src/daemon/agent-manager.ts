@@ -1,6 +1,6 @@
-import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
+import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, renameSync } from 'fs';
 import { join, relative } from 'path';
-import type { AgentConfig, AgentStatus, CtxEnv, BusPaths, WorkerStatus, TelegramMessage } from '../types/index.js';
+import type { AgentConfig, AgentStatus, CtxEnv, BusPaths, WorkerStatus, TelegramMessage, SuspendedWorkerRecord } from '../types/index.js';
 import { AgentProcess } from './agent-process.js';
 import { WorkerProcess } from './worker-process.js';
 import { FastChecker } from './fast-checker.js';
@@ -723,6 +723,8 @@ export class AgentManager {
     }
     await worker.terminate();
     this.workers.delete(name);
+    // If the worker was suspended, also drop it from the persisted registry.
+    this.removeSuspendedRecord(name);
   }
 
   /**
@@ -732,6 +734,97 @@ export class AgentManager {
     const worker = this.workers.get(name);
     if (!worker) return false;
     return worker.inject(text);
+  }
+
+  /**
+   * Suspend a running worker — wait for next REPL idle (up to timeoutMs),
+   * write a snapshot handoff doc, terminate the PTY, and persist the
+   * suspended-worker record so it survives daemon restart and can be
+   * resumed via `resumeWorker(name)`.
+   */
+  async suspendWorker(name: string, timeoutMs: number = 30_000): Promise<{ snapshotPath: string; reason: 'idle' | 'timeout' }> {
+    const worker = this.workers.get(name);
+    if (!worker) {
+      // Maybe it was suspended in a prior daemon process — check the registry.
+      const persisted = this.loadSuspendedRegistry();
+      if (persisted.find(r => r.name === name)) {
+        throw new Error(`Worker "${name}" is already suspended (persisted)`);
+      }
+      throw new Error(`Worker "${name}" not found`);
+    }
+
+    const result = await worker.suspend(timeoutMs);
+
+    // Persist so the suspend survives daemon restart.
+    const status = worker.getStatus();
+    const record: SuspendedWorkerRecord = {
+      name,
+      dir: worker.dir,
+      parent: worker.parent,
+      originalPrompt: worker.getOriginalPrompt() ?? '',
+      snapshotPath: result.path,
+      suspendedAt: status.suspendedAt ?? new Date().toISOString(),
+      reason: result.reason,
+    };
+    this.upsertSuspendedRecord(record);
+
+    return { snapshotPath: result.path, reason: result.reason };
+  }
+
+  /**
+   * Resume a previously-suspended worker. Looks up the persisted record,
+   * re-spawns via the existing `spawnWorker` path with a handoff prompt
+   * pointing at the snapshot, then drops the record from the registry.
+   */
+  async resumeWorker(name: string): Promise<void> {
+    // Prefer in-memory worker entry (same daemon process), fall back to
+    // persisted registry (resume after daemon restart).
+    const inMem = this.workers.get(name);
+    let record: SuspendedWorkerRecord | undefined;
+
+    if (inMem && inMem.isSuspended()) {
+      record = {
+        name,
+        dir: inMem.dir,
+        parent: inMem.parent,
+        originalPrompt: inMem.getOriginalPrompt() ?? '',
+        snapshotPath: inMem.getSnapshotPath() ?? '',
+        suspendedAt: inMem.getStatus().suspendedAt ?? new Date().toISOString(),
+        reason: 'idle',
+      };
+    } else {
+      const persisted = this.loadSuspendedRegistry();
+      record = persisted.find(r => r.name === name);
+    }
+
+    if (!record) {
+      throw new Error(`Worker "${name}" is not in a suspended state`);
+    }
+
+    // Drop the in-memory entry first so spawnWorker doesn't reject on
+    // "already running".
+    if (inMem) this.workers.delete(name);
+
+    const handoff = [
+      `RESUMED FROM SUSPEND. Read your snapshot at ${record.snapshotPath} first,`,
+      `then run \`git status\` to see what already happened in the working`,
+      `directory. After that, continue the original task below.`,
+      ``,
+      `--- ORIGINAL TASK ---`,
+      record.originalPrompt,
+    ].join('\n');
+
+    await this.spawnWorker(name, record.dir, handoff, record.parent);
+    this.removeSuspendedRecord(name);
+  }
+
+  /**
+   * List currently-suspended workers (in-memory and persisted).
+   */
+  listSuspendedWorkers(): SuspendedWorkerRecord[] {
+    // Persisted is the source of truth (covers post-restart case);
+    // in-memory entries should already be in the persisted file.
+    return this.loadSuspendedRegistry();
   }
 
   /**
@@ -746,6 +839,51 @@ export class AgentManager {
    */
   getWorkerStatus(name: string): WorkerStatus | null {
     return this.workers.get(name)?.getStatus() ?? null;
+  }
+
+  // ── Suspended-worker registry persistence ─────────────────────────────────
+  // Stored at <ctxRoot>/state/suspended-workers.json. Atomic write via
+  // tempfile+rename. Load is fail-safe to empty (corrupt file → warn + []).
+
+  private suspendedRegistryPath(): string {
+    return join(this.ctxRoot, 'state', 'suspended-workers.json');
+  }
+
+  private loadSuspendedRegistry(): SuspendedWorkerRecord[] {
+    const path = this.suspendedRegistryPath();
+    if (!existsSync(path)) return [];
+    try {
+      const raw = readFileSync(path, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed as SuspendedWorkerRecord[];
+    } catch (err) {
+      console.warn(`[agent-manager] suspended-workers.json unreadable, treating as empty: ${(err as Error).message}`);
+      return [];
+    }
+  }
+
+  private writeSuspendedRegistry(records: SuspendedWorkerRecord[]): void {
+    const path = this.suspendedRegistryPath();
+    try { mkdirSync(join(this.ctxRoot, 'state'), { recursive: true }); } catch { /* ignore */ }
+    const tmp = `${path}.tmp.${process.pid}`;
+    writeFileSync(tmp, JSON.stringify(records, null, 2), 'utf-8');
+    // renameSync is atomic on the same filesystem.
+    renameSync(tmp, path);
+  }
+
+  private upsertSuspendedRecord(record: SuspendedWorkerRecord): void {
+    const records = this.loadSuspendedRegistry().filter(r => r.name !== record.name);
+    records.push(record);
+    this.writeSuspendedRegistry(records);
+  }
+
+  private removeSuspendedRecord(name: string): void {
+    const records = this.loadSuspendedRegistry();
+    const filtered = records.filter(r => r.name !== name);
+    if (filtered.length !== records.length) {
+      this.writeSuspendedRegistry(filtered);
+    }
   }
 
   /**
