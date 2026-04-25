@@ -67,6 +67,7 @@ export const listWorkersCommand = new Command('list-workers')
     const workers = response.data as Array<{
       name: string; status: string; pid?: number; dir: string;
       parent?: string; spawnedAt: string; exitCode?: number;
+      resetAt?: string; rateLimitRetries?: number;
     }>;
 
     if (!workers || workers.length === 0) {
@@ -79,7 +80,13 @@ export const listWorkersCommand = new Command('list-workers')
       const parent = w.parent ? ` ← ${w.parent}` : '';
       const exit = w.exitCode !== undefined ? ` exit=${w.exitCode}` : '';
       const age = Math.round((Date.now() - new Date(w.spawnedAt).getTime()) / 1000);
-      console.log(`${w.name}  ${w.status}${pid}${exit}${parent}  ${age}s  ${w.dir}`);
+      let suffix = '';
+      if (w.status === 'waiting-for-reset') {
+        const eta = w.resetAt ? ` ETA ${new Date(w.resetAt).toLocaleString()}` : '';
+        const retries = w.rateLimitRetries ? ` retries=${w.rateLimitRetries}` : '';
+        suffix = ` [${eta.trim()}${retries}]`;
+      }
+      console.log(`${w.name}  ${w.status}${pid}${exit}${parent}${suffix}  ${age}s  ${w.dir}`);
     }
   });
 

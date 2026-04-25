@@ -3,6 +3,7 @@ import { join, relative } from 'path';
 import type { AgentConfig, AgentStatus, CtxEnv, BusPaths, WorkerStatus, TelegramMessage } from '../types/index.js';
 import { AgentProcess } from './agent-process.js';
 import { WorkerProcess } from './worker-process.js';
+import { WorkerWatcher } from './worker-watcher.js';
 import { FastChecker } from './fast-checker.js';
 import { TelegramAPI } from '../telegram/api.js';
 import { TelegramPoller } from '../telegram/poller.js';
@@ -28,12 +29,64 @@ export class AgentManager {
   private ctxRoot: string;
   private frameworkRoot: string;
   private org: string;
+  private workerWatcher: WorkerWatcher;
 
   constructor(instanceId: string, ctxRoot: string, frameworkRoot: string, org: string) {
     this.instanceId = instanceId;
     this.ctxRoot = ctxRoot;
     this.frameworkRoot = frameworkRoot;
     this.org = org;
+    this.workerWatcher = new WorkerWatcher({
+      getRunningWorkers: () => this.workers,
+      sendParentAlert: (workerName, parent, message) => this.sendParentAlert(workerName, parent, message),
+      ctxRoot: this.ctxRoot,
+      org: this.org,
+    });
+  }
+
+  /**
+   * Send an inbox bus message from a worker to its parent agent. Used by
+   * WorkerWatcher to alert the parent about exhausted rate-limit retries
+   * or stuck-at-summary-step workers. Falls back to a console log if no
+   * parent is set or the inbox write fails.
+   */
+  private sendParentAlert(workerName: string, parent: string | undefined, message: string): void {
+    if (!parent) {
+      console.log(`[agent-manager] no parent for worker ${workerName}; alert discarded: ${message}`);
+      return;
+    }
+    try {
+      const inboxDir = join(this.ctxRoot, 'inbox', parent);
+      try { mkdirSync(inboxDir, { recursive: true }); } catch { /* ignore */ }
+      const id = `${Date.now()}-${workerName}-watcher`;
+      const msg = {
+        id,
+        from: workerName,
+        to: parent,
+        priority: 'normal' as const,
+        timestamp: new Date().toISOString(),
+        text: message,
+        reply_to: null,
+      };
+      const fname = join(inboxDir, `${id}.json`);
+      writeFileSync(fname, JSON.stringify(msg, null, 2), 'utf-8');
+    } catch (err) {
+      console.error(`[agent-manager] sendParentAlert failed: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Start the worker watcher. Called from discoverAndStart.
+   */
+  startWorkerWatcher(): void {
+    this.workerWatcher.start();
+  }
+
+  /**
+   * Stop the worker watcher (for clean daemon shutdown / tests).
+   */
+  stopWorkerWatcher(): void {
+    this.workerWatcher.stop();
   }
 
   /**
@@ -65,6 +118,10 @@ export class AgentManager {
       // of falling back to `this.org` (the daemon's startup org).
       await this.startAgent(name, dir, config, org);
     }
+    // Start the worker watcher AFTER all agents are up. No-op until a
+    // worker exists; starting it here ties the lifecycle to the daemon
+    // boot path the rest of the system uses.
+    this.startWorkerWatcher();
   }
 
   /**
@@ -613,6 +670,10 @@ export class AgentManager {
    * time `pty.kill()` runs, every agent already has its marker on disk.
    */
   async stopAll(): Promise<void> {
+    // Stop the worker watcher first so it doesn't try to inject into
+    // workers that are about to be torn down.
+    this.stopWorkerWatcher();
+
     const names = [...this.agents.keys()];
 
     for (const name of names) {

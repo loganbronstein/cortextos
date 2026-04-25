@@ -405,7 +405,12 @@ export interface IPCRequest {
 
 // Worker Types
 
-export type WorkerStatusValue = 'starting' | 'running' | 'completed' | 'failed';
+export type WorkerStatusValue =
+  | 'starting'
+  | 'running'
+  | 'waiting-for-reset'
+  | 'completed'
+  | 'failed';
 
 export interface WorkerStatus {
   name: string;
@@ -415,6 +420,10 @@ export interface WorkerStatus {
   parent?: string;
   spawnedAt: string;
   exitCode?: number;
+  /** Set when status is `waiting-for-reset` — when the rate-limit will lift. */
+  resetAt?: string;
+  /** How many auto-resume injections the watcher has tried. */
+  rateLimitRetries?: number;
 }
 
 export interface IPCResponse {

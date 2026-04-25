@@ -26,6 +26,8 @@ export class WorkerProcess {
   private exitCode: number | undefined;
   private onDoneCallback: ((name: string, exitCode: number) => void) | null = null;
   private log: (msg: string) => void;
+  private resetAt: Date | null = null;
+  private rateLimitRetries: number = 0;
 
   constructor(
     name: string,
@@ -95,6 +97,32 @@ export class WorkerProcess {
   }
 
   /**
+   * Mark the worker as awaiting Anthropic rate-limit reset (used by
+   * WorkerWatcher). The PTY is still alive — we just surface the state
+   * via getStatus so list-workers and the dashboard can show "waiting
+   * for reset at <time>" instead of an opaque idle.
+   */
+  markWaitingForReset(resetAt: Date | null): void {
+    if (this.status !== 'running' && this.status !== 'waiting-for-reset') return;
+    this.status = 'waiting-for-reset';
+    this.resetAt = resetAt;
+    this.rateLimitRetries += 0; // touch to keep TS happy with the field
+  }
+
+  /**
+   * Clear the waiting-for-reset state once the worker has produced fresh
+   * output past the rate-limit banner.
+   */
+  clearWaitingForReset(): void {
+    if (this.status === 'waiting-for-reset') {
+      this.status = 'running';
+    }
+    this.resetAt = null;
+    // Keep retries counter for telemetry across one full cycle; reset only
+    // when the worker exits.
+  }
+
+  /**
    * Get current worker status snapshot.
    */
   getStatus(): WorkerStatus {
@@ -106,6 +134,8 @@ export class WorkerProcess {
       parent: this.parent,
       spawnedAt: this.spawnedAt,
       exitCode: this.exitCode,
+      resetAt: this.resetAt?.toISOString(),
+      rateLimitRetries: this.rateLimitRetries || undefined,
     };
   }
 
