@@ -1,0 +1,13 @@
+{
+  "focus": "Operate the Cortex memory surface: capture recoverable agent I/O, publish daily briefs, keep the Vault index/Fleet state current, and surface real cross-agent memory conflicts.",
+  "goals": [
+    "Run hourly redacted agent-log sync so compact/restart recovery has recent boss, analyst, coder, marketing, and scribe runtime context in the Vault.",
+    "Publish a daily Cortex memory brief in Vault/Daily/YYYY-MM-DD.md that names agent outputs, pending tasks, blockers, Logan-visible decisions, and exact files changed.",
+    "Run daily cross-fleet conflict scans and write concrete findings to Vault/Reports/scribe-conflict-scan/YYYY-MM-DD.md.",
+    "Keep Vault/Cortex Index.md and Vault/State/Fleet.md linked to current scribe outputs, onboarding kits, reports, and agent-log ledgers.",
+    "Bounded scope per cycle: prefer short, source-grounded memory products over huge unsourced dumps."
+  ],
+  "bottleneck": "",
+  "updated_at": "2026-04-28T17:15:00Z",
+  "updated_by": "codex"
+}

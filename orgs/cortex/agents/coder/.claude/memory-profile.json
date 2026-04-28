@@ -1,0 +1,32 @@
+{
+  "agent_name": "coder",
+  "role": "full_stack_engineer",
+  "allowed_episode_types": [
+    "code_pushed",
+    "pr_opened",
+    "bug_fixed",
+    "task_completed",
+    "test_passed",
+    "build_passed",
+    "implementation_blocked",
+    "session_start",
+    "session_end",
+    "guardrail_triggered"
+  ],
+  "disallowed_episode_types": [
+    "briefing_sent",
+    "external_comms_sent",
+    "financial_action"
+  ],
+  "allowed_decision_types": [
+    "code_refactor",
+    "implementation_strategy",
+    "test_strategy",
+    "architecture",
+    "ops_lesson"
+  ],
+  "disallowed_decision_types": [
+    "approval_policy",
+    "vendor_purchase"
+  ]
+}

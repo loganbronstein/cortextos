@@ -1,0 +1,36 @@
+{
+  "agent_name": "marketing",
+  "enabled": true,
+  "startup_delay": 0,
+  "max_session_seconds": 255600,
+  "max_crashes_per_day": 10,
+  "working_directory": "",
+  "timezone": "America/Chicago",
+  "crons": [
+    {
+      "name": "heartbeat",
+      "type": "recurring",
+      "interval": "4h",
+      "prompt": "Read HEARTBEAT.md and follow its instructions. Update your heartbeat, check inbox, and work on your highest priority task."
+    }
+  ],
+  "ecosystem": {
+    "local_version_control": {
+      "enabled": true
+    }
+  },
+  "day_mode_start": "06:30",
+  "day_mode_end": "23:00",
+  "communication_style": "direct and casual",
+  "ctx_warning_threshold": 75,
+  "ctx_autoreset_threshold": 85,
+  "approval_rules": {
+    "always_ask": [
+      "external-comms",
+      "financial",
+      "deployment",
+      "data-deletion"
+    ],
+    "never_ask": []
+  }
+}

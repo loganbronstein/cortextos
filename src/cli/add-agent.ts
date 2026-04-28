@@ -100,6 +100,8 @@ export const addAgentCommand = new Command('add-agent')
         agent_name: name,
         startup_delay: 0,
         max_session_seconds: 255600,
+        ctx_warning_threshold: 75,
+        ctx_autoreset_threshold: 85,
         enabled: true,
         crons: [],
       }, null, 2) + '\n', 'utf-8');
@@ -196,6 +198,9 @@ export const addAgentCommand = new Command('add-agent')
             agentCfg.day_mode_end = (typeof ctx.day_mode_end === 'string' && timeRegex.test(ctx.day_mode_end))
               ? ctx.day_mode_end : '00:00';
             agentCfg.communication_style = ctx.communication_style || 'direct and casual';
+            if (agentCfg.ctx_autoreset_threshold === undefined || agentCfg.ctx_autoreset_threshold === null) {
+              agentCfg.ctx_autoreset_threshold = 55;
+            }
             agentCfg.approval_rules = {
               always_ask: Array.isArray(ctx.default_approval_categories)
                 ? ctx.default_approval_categories

@@ -1,0 +1,13 @@
+{
+  "focus": "Standby after Codex completed memory-system Phase 2 infrastructure items. Review or extend only if boss assigns follow-up.",
+  "goals": [
+    "Review Codex memory-system patch if asked: TS log-decision/log-episode commands, memory profiles, add-agent ctx_autoreset default, marketing/scribe PreCompact hook wiring.",
+    "Do not duplicate the completed marketing PreCompact hook task unless a verification check fails.",
+    "Do not duplicate the completed add-agent ctx_autoreset default unless a new-agent dry run proves it missing.",
+    "Standby for Sorzo or SA bug fix dispatches as Logan engages.",
+    "Plan-First Review on every non-trivial diff per fleet rule. Adversarial review before merge."
+  ],
+  "bottleneck": "",
+  "updated_at": "2026-04-28T17:20:00Z",
+  "updated_by": "codex"
+}

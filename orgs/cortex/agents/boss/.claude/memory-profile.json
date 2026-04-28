@@ -1,0 +1,38 @@
+{
+  "agent_name": "boss",
+  "role": "orchestrator",
+  "allowed_episode_types": [
+    "architecture_adopted",
+    "task_dispatched",
+    "task_completed_by_specialist",
+    "briefing_sent",
+    "approval_routed",
+    "goal_cascade",
+    "agent_spawned",
+    "agent_onboarding_complete",
+    "agent_restarted",
+    "agent_blocked",
+    "session_start",
+    "session_end",
+    "guardrail_triggered"
+  ],
+  "disallowed_episode_types": [
+    "code_pushed",
+    "deploy_executed",
+    "experiment_run"
+  ],
+  "allowed_decision_types": [
+    "architecture",
+    "dispatch_logic",
+    "governance",
+    "agent_roster",
+    "cron_schedule",
+    "approval_policy",
+    "process",
+    "agent_lifecycle",
+    "ops_lesson"
+  ],
+  "disallowed_decision_types": [
+    "code_refactor"
+  ]
+}

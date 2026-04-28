@@ -17,6 +17,7 @@ import { createApproval, updateApproval } from '../bus/approval.js';
 import { createReminder, listReminders, ackReminder, pruneReminders } from '../bus/reminders.js';
 import { updateCronFire } from '../bus/cron-state.js';
 import { queryKnowledgeBase, ingestKnowledgeBase, ensureKBDirs } from '../bus/knowledge-base.js';
+import { logEpisodeToNeon, logDecisionToNeon, type Importance } from '../bus/memory-log.js';
 import { checkUsageApi, refreshOAuthToken, rotateOAuth, loadAccounts, ALERT_5H, ALERT_7D } from '../bus/oauth.js';
 import { resolvePaths } from '../utils/paths.js';
 import { resolveEnv } from '../utils/env.js';
@@ -502,6 +503,86 @@ busCommand
     const paths = resolvePaths(env.agentName, env.instanceId, env.org);
     logEvent(paths, env.agentName, env.org, category as EventCategory, event, severity as EventSeverity, opts.meta);
     console.log(`Logged ${category}/${event} (${severity})`);
+  });
+
+busCommand
+  .command('log-episode')
+  .description('Log a high-signal agent episode to Neon operational memory')
+  .argument('<agent>', 'Agent name')
+  .argument('<episode-type>', 'Episode type allowed by the agent memory profile')
+  .argument('<importance>', 'Importance: low, medium, high, critical')
+  .argument('<summary>', 'Short human-readable summary')
+  .argument('[payload-json]', 'Optional JSON payload', '{}')
+  .option('--task <id>', 'Linked task id')
+  .option('--approval <id>', 'Linked approval id')
+  .option('--linked-agent <agent>', 'Linked agent name')
+  .option('--format <fmt>', 'Output format: text or json', 'text')
+  .action((agent: string, episodeType: string, importance: string, summary: string, payloadJson: string, opts: { task?: string; approval?: string; linkedAgent?: string; format?: string }) => {
+    const env = resolveEnv();
+    try {
+      const result = logEpisodeToNeon({
+        frameworkRoot: env.frameworkRoot || env.projectRoot || process.cwd(),
+        org: env.org || 'cortex',
+        agentDir: env.agentDir,
+      }, {
+        agent,
+        episodeType,
+        importance: importance as Importance,
+        summary,
+        payload: payloadJson,
+        linkedTaskId: opts.task,
+        linkedApprovalId: opts.approval,
+        linkedAgent: opts.linkedAgent,
+      });
+      if (opts.format === 'json') console.log(JSON.stringify(result, null, 2));
+      else console.log(`logged: ${result.agent} / ${result.episode_type} / ${result.importance}`);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+busCommand
+  .command('log-decision')
+  .description('Log a high-value agent decision to Neon operational memory')
+  .argument('<agent>', 'Agent name')
+  .argument('<decision-type>', 'Decision type allowed by the agent memory profile')
+  .argument('<importance>', 'Importance: low, medium, high, critical')
+  .argument('<title>', 'Decision title')
+  .argument('<rationale>', 'Decision rationale')
+  .argument('[alternatives]', 'Alternatives considered', '')
+  .argument('[payload-json]', 'Optional JSON payload', '{}')
+  .option('--task <id>', 'Linked task id')
+  .option('--entities <json>', 'Linked entities JSON array', '[]')
+  .option('--state <state>', 'Lifecycle state: proposed, active, superseded, reverted', 'active')
+  .option('--supersedes <id>', 'Decision id this decision supersedes')
+  .option('--format <fmt>', 'Output format: text or json', 'text')
+  .action((agent: string, decisionType: string, importance: string, title: string, rationale: string, alternatives: string, payloadJson: string, opts: { task?: string; entities?: string; state?: string; supersedes?: string; format?: string }) => {
+    const env = resolveEnv();
+    try {
+      const result = logDecisionToNeon({
+        frameworkRoot: env.frameworkRoot || env.projectRoot || process.cwd(),
+        org: env.org || 'cortex',
+        agentDir: env.agentDir,
+      }, {
+        agent,
+        decisionType,
+        importance: importance as Importance,
+        title,
+        rationale,
+        alternatives,
+        payload: payloadJson,
+        linkedTaskId: opts.task,
+        linkedEntities: opts.entities,
+        lifecycleState: opts.state as 'proposed' | 'active' | 'superseded' | 'reverted',
+        supersedesId: opts.supersedes,
+      });
+      if (opts.format === 'json') console.log(JSON.stringify(result, null, 2));
+      else console.log(`logged: ${result.agent} / ${result.decision_type} / ${result.importance}`);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
   });
 
 busCommand

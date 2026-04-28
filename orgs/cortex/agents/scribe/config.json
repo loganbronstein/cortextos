@@ -1,0 +1,74 @@
+{
+  "agent_name": "scribe",
+  "enabled": true,
+  "startup_delay": 0,
+  "max_session_seconds": 255600,
+  "max_crashes_per_day": 10,
+  "working_directory": "",
+  "timezone": "America/Chicago",
+  "ctx_warning_threshold": 75,
+  "ctx_autoreset_threshold": 85,
+  "crons": [
+    {
+      "name": "heartbeat",
+      "type": "recurring",
+      "interval": "4h",
+      "prompt": "Read HEARTBEAT.md and follow its instructions. Update your heartbeat, check inbox, and work on your highest priority task."
+    },
+    {
+      "name": "vault-agent-log-sync",
+      "type": "recurring",
+      "interval": "1h",
+      "cron": "7 * * * *",
+      "prompt": "Run /Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/scripts/vault-sync-agent-logs.sh silently. It mirrors redacted runtime logs for boss, analyst, coder, marketing, and scribe into Vault/Research/cortextos/_agent-logs/. Do NOT send Telegram. Append one line to today's scribe memory with the updated stream count, then end your turn."
+    },
+    {
+      "name": "vault-chat-transcript-sync",
+      "type": "recurring",
+      "interval": "1h",
+      "cron": "12 * * * *",
+      "prompt": "Run node /Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/scripts/vault-sync-chat-transcripts.mjs silently. It mirrors redacted Claude, Codex, Cortex task-audit, and Cortex agent-message transcript sources into Vault/Research/cortextos/transcripts/. Do NOT send Telegram. Append one line to today's scribe memory with the mirrored file count, then end your turn."
+    },
+    {
+      "name": "chat-research-synthesis",
+      "type": "recurring",
+      "cron": "50 7 * * *",
+      "prompt": "Run node /Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/scripts/vault-synthesize-chat-research.mjs silently after transcript sync. It creates a source-linked research paper at Vault/Research/cortextos/chat-research/YYYY-MM-DD.md from recent transcript archive notes. Do NOT send Telegram unless it finds a critical blocker."
+    },
+    {
+      "name": "daily-memory-brief",
+      "type": "recurring",
+      "cron": "35 7 * * *",
+      "prompt": "Create today's Cortex daily memory brief at /Users/loganbronstein/Sale Advisor/Vault/Daily/YYYY-MM-DD.md. Read the last 24h of task status, agent heartbeats, scribe conflict reports, promote queue, and redacted agent-log ledger. Include: what each of the five agents did, what is pending, what is blocked, what Logan needs to see, and the exact files created or changed. Update /Users/loganbronstein/Sale Advisor/Vault/State/Fleet.md if fleet state changed. Do NOT send Telegram unless a critical blocker exists."
+    },
+    {
+      "name": "conflict-scan",
+      "type": "recurring",
+      "cron": "10 15 * * *",
+      "prompt": "Run a cross-fleet memory conflict scan. Compare all five agent MEMORY.md files, yesterday/today daily memory files, Vault/Decisions/Open.md, Vault/Cortex Index.md, and Vault/State/Fleet.md. Write findings to Vault/Reports/scribe-conflict-scan/YYYY-MM-DD.md with concrete source paths. Surface only real contradictions, stale goals, missing links, or decisions not represented in Decisions/Open."
+    },
+    {
+      "name": "cortex-index-refresh",
+      "type": "recurring",
+      "interval": "6h",
+      "prompt": "Refresh Vault/Cortex Index.md and Vault/State/Fleet.md for newly created scribe outputs, agent-log ledgers, daily briefs, conflict scans, onboarding kits, and memory health reports. Keep links current, remove stale 4-agent wording, and do not rewrite script-owned Daily Notes message blocks."
+    }
+  ],
+  "ecosystem": {
+    "local_version_control": {
+      "enabled": true
+    }
+  },
+  "day_mode_start": "06:30",
+  "day_mode_end": "23:00",
+  "communication_style": "direct and casual",
+  "approval_rules": {
+    "always_ask": [
+      "external-comms",
+      "financial",
+      "deployment",
+      "data-deletion"
+    ],
+    "never_ask": []
+  }
+}

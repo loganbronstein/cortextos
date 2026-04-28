@@ -1,0 +1,104 @@
+{
+  "agent_name": "boss",
+  "enabled": true,
+  "startup_delay": 0,
+  "max_session_seconds": 255600,
+  "max_crashes_per_day": 10,
+  "working_directory": "",
+  "timezone": "America/Chicago",
+  "day_mode_start": "06:30",
+  "day_mode_end": "23:00",
+  "communication_style": "direct and casual",
+  "ctx_warning_threshold": 75,
+  "ctx_autoreset_threshold": 85,
+  "approval_rules": {
+    "always_ask": [
+      "external-comms",
+      "financial",
+      "deployment",
+      "data-deletion"
+    ],
+    "never_ask": []
+  },
+  "crons": [
+    {
+      "name": "heartbeat",
+      "type": "recurring",
+      "interval": "4h",
+      "prompt": "Read HEARTBEAT.md and follow its instructions. Update your heartbeat, check inbox, review agent health via cortextos bus read-all-heartbeats, and work on coordination tasks."
+    },
+    {
+      "name": "check-approvals",
+      "type": "recurring",
+      "interval": "2h",
+      "prompt": "Check for pending approvals and human tasks. (1) cortextos bus list-approvals --format json — for any pending approval older than 1h, send user a Telegram reminder. (2) cortextos bus list-tasks --project human-tasks --status pending — for any [HUMAN] task pending >4h, send user a Telegram reminder with the task title and what's blocked. ACK any approval/human-task inbox messages."
+    },
+    {
+      "name": "morning-review",
+      "type": "recurring",
+      "cron": "0 8 * * *",
+      "prompt": "Read .claude/skills/morning-review/SKILL.md and execute the full morning review workflow. Include goal cascade from .claude/skills/goal-management/SKILL.md."
+    },
+    {
+      "name": "evening-review",
+      "type": "recurring",
+      "cron": "0 18 * * *",
+      "prompt": "Read .claude/skills/evening-review/SKILL.md and execute the full evening review workflow. Summarize the day, propose overnight tasks, queue nighttime work."
+    },
+    {
+      "name": "weekly-review",
+      "type": "recurring",
+      "cron": "0 8 * * 0",
+      "prompt": "Read .claude/skills/weekly-review/SKILL.md and run the full weekly review. Review all agent outputs, evaluate performance, plan next week."
+    },
+    {
+      "name": "vault-sync-telegram",
+      "type": "recurring",
+      "interval": "1h",
+      "cron": "17 * * * *",
+      "prompt": "Run /Users/loganbronstein/cortextos/orgs/cortex/agents/boss/scripts/vault-sync-telegram.sh silently — appends new Telegram messages from all 5 primary agents to Logan's Vault Daily Notes. Idempotent. Do NOT send Telegram. Just bash the script, log the count to today's daily memory as one line, and end your turn."
+    },
+    {
+      "name": "vault-sync-agents",
+      "type": "recurring",
+      "interval": "3h",
+      "cron": "37 */3 * * *",
+      "prompt": "Run /Users/loganbronstein/cortextos/orgs/cortex/agents/boss/scripts/vault-sync-agents.sh silently. Syncs all 5 primary agents' memory/, handoffs/, MEMORY.md to Logan's Vault Research/cortextos/{agent}/. Idempotent rsync. Do NOT send Telegram. Just bash the script, log the count to today's daily memory as one line, end your turn."
+    },
+    {
+      "name": "vault-entity-extractor",
+      "type": "recurring",
+      "cron": "42 2 * * *",
+      "prompt": "Run /Users/loganbronstein/cortextos/orgs/cortex/agents/boss/scripts/vault-entity-extractor.py silently. Scans Vault for plain-text entity mentions, wraps as wikilinks, idempotent. Skips Daily Notes, Templates, attachments. Do NOT send Telegram. Just run, log the count to today's daily memory as one line, end your turn."
+    },
+    {
+      "name": "vault-lint",
+      "type": "recurring",
+      "cron": "32 2 * * *",
+      "prompt": "Run python3 /Users/loganbronstein/cortextos/orgs/cortex/agents/boss/scripts/vault-lint.py silently. Karpathy Lint pass. Outputs to Vault/Reports/cortextos-lint/. Do NOT send Telegram. Just run, log the count to today's daily memory as one line, end your turn."
+    },
+    {
+      "name": "vault-morning-ingest",
+      "type": "recurring",
+      "cron": "53 7 * * *",
+      "prompt": "Run /Users/loganbronstein/cortextos/orgs/cortex/agents/boss/scripts/vault-morning-ingest.sh silently. Karpathy Ingest pass. Reads yesterday's Daily Note, surfaces decision-shaped lines + new helper notes, writes promote-queue. Output to Vault/Reports/cortextos-promote-queue/. Do NOT send Telegram. Just run, log to daily memory as one line, end your turn."
+    },
+    {
+      "name": "vault-stub-pages",
+      "type": "recurring",
+      "cron": "50 2 * * 0",
+      "prompt": "Run python3 /Users/loganbronstein/cortextos/orgs/cortex/agents/boss/scripts/vault-stub-pages.py silently. Generates stub pages for entities wikilinked 3+ times but missing a target page. Outputs to Vault/Entities/. Idempotent. Do NOT send Telegram. Log count to daily memory, end your turn."
+    },
+    {
+      "name": "graphify-weekly-rebuild",
+      "type": "recurring",
+      "cron": "23 3 * * 0",
+      "prompt": "Spawn a graphify-vault worker to rebuild Logan's Vault knowledge graph. cortextos spawn-worker graphify-weekly --parent boss --dir /Users/loganbronstein/cortextos --prompt 'Read .claude/skills/graphify/SKILL.md and run /graphify on /Users/loganbronstein/Sale\\ Advisor/Vault. Use --update mode to incrementally re-extract only new and changed files since the last run, save to existing graphify-out/. When complete, send-message to boss with new node/edge/cluster counts vs previous. Then end your session. Do NOT skip files. Do NOT send Telegram to Logan.'  Then end your turn."
+    }
+  ],
+  "ecosystem": {
+    "local_version_control": {
+      "enabled": true
+    }
+  }
+}

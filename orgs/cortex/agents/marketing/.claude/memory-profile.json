@@ -1,0 +1,31 @@
+{
+  "agent_name": "marketing",
+  "role": "marketing",
+  "allowed_episode_types": [
+    "content_plan_created",
+    "campaign_reviewed",
+    "creative_research_complete",
+    "market_research_complete",
+    "approval_needed",
+    "asset_delivered",
+    "session_start",
+    "session_end",
+    "guardrail_triggered"
+  ],
+  "disallowed_episode_types": [
+    "code_pushed",
+    "deploy_executed",
+    "financial_action"
+  ],
+  "allowed_decision_types": [
+    "brand_strategy",
+    "content_strategy",
+    "campaign_strategy",
+    "approval_policy",
+    "ops_lesson"
+  ],
+  "disallowed_decision_types": [
+    "code_refactor",
+    "deployment"
+  ]
+}

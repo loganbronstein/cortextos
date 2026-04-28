@@ -180,6 +180,17 @@ async function main(): Promise<void> {
   } catch { /* ignore */ }
 
   // Decide whether to actually send to Telegram.
+  // Context auto-resets are internal maintenance, not user-facing events. The
+  // restart is still recorded in crashes.log/restarts.log, but Telegram spam
+  // makes healthy memory recovery look broken.
+  if (
+    endType === 'planned-restart' &&
+    reason?.startsWith('CONTEXT-FORCE-RESTART') &&
+    process.env.CTX_NOTIFY_CONTEXT_RESTARTS !== 'true'
+  ) {
+    return;
+  }
+
   const now = new Date();
   const quiet = isQuietHoursLA(now);
   if (quiet && QUIET_SUPPRESSED_TYPES.has(endType)) {

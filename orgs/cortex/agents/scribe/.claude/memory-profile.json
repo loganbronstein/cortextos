@@ -1,0 +1,31 @@
+{
+  "agent_name": "scribe",
+  "role": "memory_surface",
+  "allowed_episode_types": [
+    "daily_brief_published",
+    "conflict_scan_published",
+    "memory_surface_updated",
+    "agent_log_sync_complete",
+    "onboarding_kit_updated",
+    "contradiction_detected",
+    "session_start",
+    "session_end",
+    "guardrail_triggered"
+  ],
+  "disallowed_episode_types": [
+    "code_pushed",
+    "deploy_executed",
+    "external_comms_sent"
+  ],
+  "allowed_decision_types": [
+    "memory_architecture",
+    "vault_structure",
+    "conflict_resolution",
+    "onboarding_policy",
+    "ops_lesson"
+  ],
+  "disallowed_decision_types": [
+    "code_refactor",
+    "deployment"
+  ]
+}

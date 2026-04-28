@@ -1,0 +1,31 @@
+{
+  "agent_name": "analyst",
+  "role": "analyst",
+  "allowed_episode_types": [
+    "metric_recorded",
+    "experiment_concluded",
+    "fleet_health_alert",
+    "autoresearch_iteration_complete",
+    "pricing_score_recorded",
+    "report_published",
+    "session_start",
+    "session_end",
+    "guardrail_triggered"
+  ],
+  "disallowed_episode_types": [
+    "code_pushed",
+    "deploy_executed",
+    "external_comms_sent"
+  ],
+  "allowed_decision_types": [
+    "metric_definition",
+    "experiment_design",
+    "measurement_policy",
+    "analysis_method",
+    "ops_lesson"
+  ],
+  "disallowed_decision_types": [
+    "deployment",
+    "vendor_purchase"
+  ]
+}

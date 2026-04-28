@@ -1,5 +1,5 @@
-import { readFileSync, existsSync, writeFileSync } from 'fs';
-import { join, basename } from 'path';
+import { readFileSync, existsSync, writeFileSync, readdirSync, statSync } from 'fs';
+import { join, basename, dirname } from 'path';
 import { homedir } from 'os';
 import type { CtxEnv } from '../types/index.js';
 import { ensureDir } from './atomic.js';
@@ -31,10 +31,13 @@ export function resolveEnv(overrides?: Partial<CtxEnv>): CtxEnv {
     envFile.CTX_ROOT ||
     join(homedir(), '.cortextos', instanceId);
 
+  const cwdProjectRoot = detectProjectRoot(process.cwd());
+
   const frameworkRoot =
     overrides?.frameworkRoot ||
     process.env.CTX_FRAMEWORK_ROOT ||
     envFile.CTX_FRAMEWORK_ROOT ||
+    cwdProjectRoot ||
     '';
 
   const agentName =
@@ -43,16 +46,19 @@ export function resolveEnv(overrides?: Partial<CtxEnv>): CtxEnv {
     envFile.CTX_AGENT_NAME ||
     basename(process.cwd());
 
-  const org =
-    overrides?.org ||
-    process.env.CTX_ORG ||
-    envFile.CTX_ORG ||
-    '';
-
   const projectRoot =
     overrides?.projectRoot ||
     process.env.CTX_PROJECT_ROOT ||
     envFile.CTX_PROJECT_ROOT ||
+    frameworkRoot ||
+    cwdProjectRoot ||
+    '';
+
+  const org =
+    overrides?.org ||
+    process.env.CTX_ORG ||
+    envFile.CTX_ORG ||
+    detectDefaultOrg(ctxRoot, projectRoot) ||
     '';
 
   // Resolve agent directory
@@ -162,6 +168,46 @@ function parseEnvFile(filePath: string): Record<string, string> {
     // Ignore read errors
   }
   return result;
+}
+
+function detectProjectRoot(startDir: string): string {
+  let current = startDir;
+  for (let depth = 0; depth < 8; depth++) {
+    if (existsSync(join(current, 'orgs'))) return current;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return '';
+}
+
+function detectDefaultOrg(ctxRoot: string, projectRoot: string): string {
+  const orgs = new Set<string>();
+
+  const enabledAgentsPath = join(ctxRoot, 'config', 'enabled-agents.json');
+  if (existsSync(enabledAgentsPath)) {
+    try {
+      const enabledAgents = JSON.parse(readFileSync(enabledAgentsPath, 'utf-8'));
+      for (const cfg of Object.values(enabledAgents) as Array<{ enabled?: boolean; org?: string }>) {
+        if (cfg && cfg.enabled !== false && cfg.org) orgs.add(cfg.org);
+      }
+    } catch { /* fall through to project scan */ }
+  }
+
+  if (orgs.size === 1) return [...orgs][0];
+
+  if (projectRoot) {
+    const orgsDir = join(projectRoot, 'orgs');
+    try {
+      const projectOrgs = readdirSync(orgsDir).filter((entry) => {
+        try { return statSync(join(orgsDir, entry)).isDirectory(); }
+        catch { return false; }
+      });
+      if (projectOrgs.length === 1) return projectOrgs[0];
+    } catch { /* no org fallback */ }
+  }
+
+  return '';
 }
 
 /**
