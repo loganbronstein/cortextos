@@ -75,13 +75,13 @@
       "name": "vault-lint",
       "type": "recurring",
       "cron": "32 2 * * *",
-      "prompt": "Run python3 /Users/loganbronstein/cortextos/orgs/cortex/agents/boss/scripts/vault-lint.py silently. Karpathy Lint pass. Outputs to Vault/Reports/cortextos-lint/. Do NOT send Telegram. Just run, log the count to today's daily memory as one line, end your turn."
+      "prompt": "Run cortextos bus vault lint silently. Karpathy Lint pass. Outputs to Vault/Reports/cortextos-lint/. Do NOT send Telegram. Just run, log the count to today's daily memory as one line, end your turn."
     },
     {
       "name": "vault-morning-ingest",
       "type": "recurring",
       "cron": "53 7 * * *",
-      "prompt": "Run /Users/loganbronstein/cortextos/orgs/cortex/agents/boss/scripts/vault-morning-ingest.sh silently. Karpathy Ingest pass. Reads yesterday's Daily Note, surfaces decision-shaped lines + new helper notes, writes promote-queue. Output to Vault/Reports/cortextos-promote-queue/. Do NOT send Telegram. Just run, log to daily memory as one line, end your turn."
+      "prompt": "Run cortextos bus vault ingest silently. Karpathy Ingest pass. Reads yesterday's Daily Note, surfaces decision-shaped lines + new helper notes, writes promote-queue. Output to Vault/Reports/cortextos-promote-queue/. Do NOT send Telegram. Just run, log to daily memory as one line, end your turn."
     },
     {
       "name": "vault-stub-pages",
@@ -93,7 +93,7 @@
       "name": "graphify-weekly-rebuild",
       "type": "recurring",
       "cron": "23 3 * * 0",
-      "prompt": "Spawn a graphify-vault worker to rebuild Logan's Vault knowledge graph. cortextos spawn-worker graphify-weekly --parent boss --dir /Users/loganbronstein/cortextos --prompt 'Read .claude/skills/graphify/SKILL.md and run /graphify on /Users/loganbronstein/Sale\\ Advisor/Vault. Use --update mode to incrementally re-extract only new and changed files since the last run, save to existing graphify-out/. When complete, send-message to boss with new node/edge/cluster counts vs previous. Then end your session. Do NOT skip files. Do NOT send Telegram to Logan.'  Then end your turn."
+      "prompt": "Run cortextos bus vault graphify silently to rebuild Logan's Vault knowledge graph with safishamsi/graphify. When complete, record the result path and any node/edge/cluster counts you can verify in today's daily memory. Do NOT skip files. Do NOT send Telegram to Logan unless graphify fails."
     }
   ],
   "ecosystem": {

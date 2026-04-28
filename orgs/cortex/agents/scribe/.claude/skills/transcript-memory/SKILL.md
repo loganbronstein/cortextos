@@ -19,6 +19,7 @@ The transcript archive is loss-preserving and source-grounded. Summaries and res
    - Script: `scripts/vault-synthesize-chat-research.mjs`
    - Output: `Vault/Research/cortextos/chat-research/YYYY-MM-DD.md`
    - Extracts decisions, blockers, recurring patterns, operating-system failures, and improvement ideas with source links.
+   - Uses each transcript note's `source_mtime_utc`, not the Obsidian note write time, so a full backfill does not make old chats look recent.
 
 3. **Operational memory promotion**
    - Decisions/episodes go to Neon through `cortextos bus log-decision` and `log-episode`.
@@ -58,4 +59,5 @@ node /Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/scripts/vault-syn
 - Preserve raw source bodies inside transcript notes.
 - Do not use summaries as the only memory layer.
 - Every synthesis claim must link to source transcript notes.
+- Daily research must prioritize recent source conversations, not recently rewritten archive notes.
 - Ingest research papers to KB after generation.

@@ -43,6 +43,27 @@ function sourceType(text) {
   return m ? m[1].trim() : 'unknown';
 }
 
+function sourceMtimeMs(text, fallbackMs) {
+  const m = text.match(/^source_mtime_utc:\s*(.+)$/m);
+  if (!m) return fallbackMs;
+  const parsed = Date.parse(m[1].trim());
+  return Number.isFinite(parsed) ? parsed : fallbackMs;
+}
+
+function redactSensitiveLine(line) {
+  const credentialContext = /\b(api[_ -]?key|secret|token|password|credential|private[_ -]?key|bearer|authorization|fal_key|openai|anthropic|live key|revoked key|\.env)\b/i;
+  if (credentialContext.test(line)) {
+    return '[credential detail redacted]';
+  }
+  return line
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[redacted-openai-key]')
+    .replace(/\bAIza[0-9A-Za-z_-]{12,}\b/g, '[redacted-google-key]')
+    .replace(/\b\d{8,12}:[A-Za-z0-9_-]{20,}\b/g, '[redacted-bot-token]')
+    .replace(/\bre_[A-Za-z0-9_-]{12,}\b/g, '[redacted-api-key]')
+    .replace(/\bpostgres(?:ql)?:\/\/\S+/gi, '[redacted-database-url]')
+    .replace(/\b[A-Za-z0-9_-]{16,}\.{3,}\b/g, '[redacted-key-fragment]');
+}
+
 function importantLines(text) {
   const body = text.replace(/^---[\s\S]*?---\s*/, '');
   const lines = body
@@ -54,7 +75,11 @@ function importantLines(text) {
     /\b(must|need|needs|should|blocked|blocker|fix|bug|broken|risk|decision|approved|rejected|wrong|stale|missing|failed|ship|shipped|verify|verified|restart|memory|scribe|obsidian|cortex)\b/i,
     /\b(Logan|Sale Advisor|Sorzo|Valuation Core|marketing|boss|coder|analyst|scribe)\b/i,
   ];
-  return lines.filter(l => patterns.some(re => re.test(l))).slice(0, 30);
+  return lines
+    .filter(l => patterns.some(re => re.test(l)))
+    .map(redactSensitiveLine)
+    .filter((line, idx, arr) => arr.indexOf(line) === idx)
+    .slice(0, 30);
 }
 
 function bucketLine(line) {
@@ -69,16 +94,19 @@ mkdirSync(OUT_DIR, { recursive: true });
 
 const cutoff = Date.now() - SINCE_DAYS * 24 * 60 * 60 * 1000;
 const transcripts = walk(TRANSCRIPT_ROOT)
-  .map(p => ({ p, st: statSync(p) }))
-  .filter(({ st }) => st.mtimeMs >= cutoff)
-  .sort((a, b) => b.st.mtimeMs - a.st.mtimeMs)
+  .map(p => {
+    const st = statSync(p);
+    const text = readFileSync(p, 'utf-8');
+    return { p, st, text, sourceMtime: sourceMtimeMs(text, st.mtimeMs) };
+  })
+  .filter(({ sourceMtime }) => sourceMtime >= cutoff)
+  .sort((a, b) => b.sourceMtime - a.sourceMtime)
   .slice(0, MAX_TRANSCRIPTS);
 
 const buckets = new Map();
 const sources = [];
 
-for (const { p } of transcripts) {
-  const text = readFileSync(p, 'utf-8');
+for (const { p, text } of transcripts) {
   const rel = relative(VAULT, p).replace(/\.md$/, '');
   sources.push(`- [[${rel}]] (${sourceType(text)})`);
   for (const line of importantLines(text)) {
@@ -126,6 +154,7 @@ for (const [bucket, items] of buckets) {
 
 body.push('## Sources', '', ...sources.slice(0, 120), '');
 
+while (body[body.length - 1] === '') body.pop();
 writeFileSync(outPath, `${body.join('\n')}\n`, 'utf-8');
 writeFileSync(join(OUT_DIR, 'Index.md'), [
   '---',

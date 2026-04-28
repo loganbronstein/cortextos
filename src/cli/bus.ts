@@ -368,6 +368,41 @@ function resolveVaultRoot(
   return DEFAULT_VAULT_ROOT;
 }
 
+function commandAvailable(command: string): boolean {
+  const result = spawnSync('bash', ['-lc', `command -v ${command}`], {
+    encoding: 'utf-8',
+    stdio: 'pipe',
+  });
+  return result.status === 0;
+}
+
+function runVaultScript(scriptPath: string, args: string[], vaultRoot: string): void {
+  if (!existsSync(scriptPath)) {
+    throw new Error(`Required vault script not found: ${scriptPath}`);
+  }
+  execFileSync(scriptPath.endsWith('.py') ? 'python3' : 'bash', [scriptPath, ...args], {
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      VAULT: vaultRoot,
+    },
+  });
+}
+
+function fallbackMarkdownSearch(vaultRoot: string, query: string, topK: number): void {
+  const result = spawnSync(
+    'rg',
+    ['-n', '-i', '--glob', '*.md', query, vaultRoot],
+    { encoding: 'utf-8', stdio: 'pipe' },
+  );
+  if (result.status !== 0 && !result.stdout) {
+    console.log(`No vault matches found for: "${query}"`);
+    return;
+  }
+  const lines = result.stdout.split('\n').filter(Boolean).slice(0, topK);
+  for (const line of lines) console.log(line);
+}
+
 busCommand
   .command('publish-to-vault')
   .description(
@@ -435,6 +470,196 @@ busCommand
       }
     },
   );
+
+const vaultCommand = busCommand
+  .command('vault')
+  .description('Karpathy-style Obsidian memory operations: ingest, query/search, lint, and graphify');
+
+vaultCommand
+  .command('search')
+  .description('Query Logan\'s Obsidian Vault. Uses QMD when available, with KB or ripgrep fallback.')
+  .argument('<query>', 'Question or search query')
+  .option('--tool <tool>', 'auto, qmd, kb, or grep', 'auto')
+  .option('-n, --top-k <n>', 'Number of results', '5')
+  .option('--no-rerank', 'Skip QMD LLM reranking for speed/cost control')
+  .option('--vault-root <path>', 'Override the Vault root')
+  .action((query: string, opts: { tool?: string; topK?: string; rerank?: boolean; vaultRoot?: string }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    const vaultRoot = resolveVaultRoot(opts.vaultRoot, env.frameworkRoot, env.org);
+    const topK = Math.max(1, parseInt(opts.topK || '5', 10) || 5);
+    const tool = opts.tool || 'auto';
+
+    try {
+      if ((tool === 'auto' || tool === 'qmd') && commandAvailable('qmd')) {
+        const args = ['query', query, '-n', String(topK)];
+        if (opts.rerank === false) args.push('--no-rerank');
+        try {
+          execFileSync('qmd', args, { stdio: 'inherit' });
+          logEvent(paths, env.agentName, env.org, 'action', 'vault_query', 'info', {
+            tool: 'qmd',
+            query,
+            top_k: topK,
+          });
+          return;
+        } catch (err) {
+          if (tool === 'qmd') {
+            throw err;
+          }
+          console.error(`QMD unavailable, falling back to ripgrep: ${(err as Error).message}`);
+        }
+      }
+
+      if (tool === 'qmd') {
+        throw new Error('qmd is not installed or not on PATH.');
+      }
+
+      if (tool === 'kb') {
+        const result = queryKnowledgeBase(paths, query, {
+          org: env.org,
+          agent: env.agentName,
+          scope: 'all',
+          topK,
+          threshold: 0.35,
+          frameworkRoot: env.frameworkRoot || process.cwd(),
+          instanceId: env.instanceId,
+        });
+        console.log(JSON.stringify(result, null, 2));
+        logEvent(paths, env.agentName, env.org, 'action', 'vault_query', 'info', {
+          tool: 'kb',
+          query,
+          top_k: topK,
+        });
+        return;
+      }
+
+      fallbackMarkdownSearch(vaultRoot, query, topK);
+      logEvent(paths, env.agentName, env.org, 'action', 'vault_query', 'info', {
+        tool: 'grep',
+        query,
+        top_k: topK,
+      });
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+vaultCommand
+  .command('ingest')
+  .description('Run the Cortex morning ingest/promote-queue pass over the Vault')
+  .option('--vault-root <path>', 'Override the Vault root')
+  .action((opts: { vaultRoot?: string }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    const vaultRoot = resolveVaultRoot(opts.vaultRoot, env.frameworkRoot, env.org);
+    const script = join(env.frameworkRoot || process.cwd(), 'orgs', env.org, 'agents', 'boss', 'scripts', 'vault-morning-ingest.sh');
+    try {
+      runVaultScript(script, [], vaultRoot);
+      logEvent(paths, env.agentName, env.org, 'action', 'vault_ingest', 'info', {
+        tool: 'vault-morning-ingest',
+        vault_root: vaultRoot,
+      });
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+vaultCommand
+  .command('lint')
+  .description('Run the Cortex vault lint pass: broken links, orphans, stale compound notes, provenance gaps')
+  .option('--vault-root <path>', 'Override the Vault root')
+  .action((opts: { vaultRoot?: string }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    const vaultRoot = resolveVaultRoot(opts.vaultRoot, env.frameworkRoot, env.org);
+    const script = join(env.frameworkRoot || process.cwd(), 'orgs', env.org, 'agents', 'boss', 'scripts', 'vault-lint.py');
+    try {
+      runVaultScript(script, [], vaultRoot);
+      logEvent(paths, env.agentName, env.org, 'action', 'vault_lint', 'info', {
+        tool: 'vault-lint',
+        vault_root: vaultRoot,
+      });
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+vaultCommand
+  .command('fold')
+  .description('Fold recent raw transcript notes into a source-linked chat research paper')
+  .option('--vault-root <path>', 'Override the Vault root')
+  .action((opts: { vaultRoot?: string }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    const vaultRoot = resolveVaultRoot(opts.vaultRoot, env.frameworkRoot, env.org);
+    const script = join(env.frameworkRoot || process.cwd(), 'orgs', env.org, 'agents', 'scribe', 'scripts', 'vault-synthesize-chat-research.mjs');
+    try {
+      if (!existsSync(script)) {
+        throw new Error(`Required vault fold script not found: ${script}`);
+      }
+      execFileSync('node', [script], {
+        stdio: 'inherit',
+        env: {
+          ...process.env,
+          VAULT: vaultRoot,
+        },
+      });
+      logEvent(paths, env.agentName, env.org, 'action', 'vault_fold', 'info', {
+        tool: 'chat-research-fold',
+        vault_root: vaultRoot,
+      });
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+vaultCommand
+  .command('graphify')
+  .description('Run safishamsi/graphify over the Vault or an agent memory subtree')
+  .option('--agent <name>', 'Agent subtree to graphify when orgs/<org>/agents/<agent>/vault exists')
+  .option('--path <path>', 'Explicit path to graphify')
+  .option('--vault-root <path>', 'Override the Vault root')
+  .option('--cluster-only', 'Only re-run clustering against Vault/graphify-out/graph.json')
+  .action((opts: { agent?: string; path?: string; vaultRoot?: string; clusterOnly?: boolean }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    const vaultRoot = resolveVaultRoot(opts.vaultRoot, env.frameworkRoot, env.org);
+    if (!commandAvailable('graphify')) {
+      console.error('graphify is not installed or not on PATH.');
+      process.exit(1);
+    }
+    try {
+      let target = opts.path || vaultRoot;
+      if (!opts.path && opts.agent) {
+        validateAgentName(opts.agent);
+        const agentVault = join(env.frameworkRoot || process.cwd(), 'orgs', env.org, 'agents', opts.agent, 'vault');
+        target = existsSync(agentVault) ? agentVault : vaultRoot;
+      }
+      if (opts.clusterOnly) {
+        execFileSync('graphify', ['cluster-only', join(vaultRoot, 'graphify-out', 'graph.json')], {
+          cwd: vaultRoot,
+          stdio: 'inherit',
+        });
+      } else {
+        execFileSync('graphify', ['update', target], {
+          cwd: vaultRoot,
+          stdio: 'inherit',
+        });
+      }
+      logEvent(paths, env.agentName, env.org, 'action', 'vault_graphify', 'info', {
+        tool: 'graphify',
+        target,
+        cluster_only: opts.clusterOnly ?? false,
+      });
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
 
 busCommand
   .command('list-tasks')
