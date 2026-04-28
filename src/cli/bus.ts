@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { spawnSync, execFileSync } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { sendMessage, checkInbox, ackInbox } from '../bus/message.js';
 import { validateAgentName } from '../utils/validate.js';
@@ -60,6 +60,95 @@ function checkDeliverableRequirement(taskId: string, frameworkRoot: string, org:
   }
 
   return null;
+}
+
+const MEMORY_GATE_MARKER = 'last-vault-search.json';
+const MEMORY_GATE_MAX_INBOUND_AGE_MS = 6 * 60 * 60 * 1000;
+
+function recordVaultSearchMarker(
+  stateDir: string,
+  agentName: string,
+  org: string,
+  query: string,
+  tool: string,
+  topK: number,
+): void {
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(join(stateDir, MEMORY_GATE_MARKER), JSON.stringify({
+    timestamp: new Date().toISOString(),
+    agent: agentName,
+    org,
+    query,
+    tool,
+    top_k: topK,
+  }, null, 2) + '\n', 'utf-8');
+}
+
+function readJsonlNewestTimestampForChat(filePath: string, chatId: string): number | null {
+  if (!existsSync(filePath)) return null;
+  let lines: string[];
+  try {
+    lines = readFileSync(filePath, 'utf-8').trimEnd().split('\n');
+  } catch {
+    return null;
+  }
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    try {
+      const row = JSON.parse(lines[i]);
+      if (String(row.chat_id ?? '') !== String(chatId)) continue;
+      const rawTs = row.timestamp || row.archived_at || row.created_at;
+      const ts = typeof rawTs === 'string' ? Date.parse(rawTs) : NaN;
+      if (!Number.isNaN(ts)) return ts;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function readLastVaultSearchTimestamp(stateDir: string): number | null {
+  const markerPath = join(stateDir, MEMORY_GATE_MARKER);
+  if (!existsSync(markerPath)) return null;
+  try {
+    const marker = JSON.parse(readFileSync(markerPath, 'utf-8'));
+    const ts = typeof marker.timestamp === 'string' ? Date.parse(marker.timestamp) : NaN;
+    return Number.isNaN(ts) ? null : ts;
+  } catch {
+    return null;
+  }
+}
+
+function isOperationalTelegramMessage(message: string): boolean {
+  const trimmed = message.trim();
+  return /^(booting up|back\b|heartbeat|snapshot taken|restart(?:ing|ed)?\b|online\b|ack\b|got it\b|message received\b)/i.test(trimmed);
+}
+
+function checkTelegramMemoryGate(
+  ctxRoot: string,
+  stateDir: string,
+  logDir: string,
+  chatId: string,
+  message: string,
+  skipMemoryCheck?: boolean,
+): string | null {
+  if (skipMemoryCheck || process.env.CORTEXTOS_DISABLE_MEMORY_REPLY_GATE === '1') return null;
+  if (isOperationalTelegramMessage(message)) return null;
+
+  const latestInboundTs = readJsonlNewestTimestampForChat(join(logDir, 'inbound-messages.jsonl'), chatId);
+  if (!latestInboundTs) return null;
+  if (Date.now() - latestInboundTs > MEMORY_GATE_MAX_INBOUND_AGE_MS) return null;
+
+  const latestSearchTs = readLastVaultSearchTimestamp(stateDir);
+  if (latestSearchTs && latestSearchTs >= latestInboundTs) return null;
+
+  const relMarker = stateDir.startsWith(ctxRoot) ? stateDir.slice(ctxRoot.length + 1) : stateDir;
+  return [
+    'Memory gate blocked this Telegram reply.',
+    'Before replying to Logan, run a current Vault lookup so the answer is grounded in Cortex memory:',
+    "  cortextos bus vault search \"<topic from Logan's latest message>\" --no-rerank -n 5",
+    `Then retry send-telegram. Marker expected at ${relMarker}/${MEMORY_GATE_MARKER}.`,
+    'Use --skip-memory-check only for pure boot/status/ack messages.',
+  ].join('\n');
 }
 
 export const busCommand = new Command('bus')
@@ -501,6 +590,7 @@ vaultCommand
             query,
             top_k: topK,
           });
+          recordVaultSearchMarker(paths.stateDir, env.agentName, env.org, query, 'qmd', topK);
           return;
         } catch (err) {
           if (tool === 'qmd') {
@@ -530,6 +620,7 @@ vaultCommand
           query,
           top_k: topK,
         });
+        recordVaultSearchMarker(paths.stateDir, env.agentName, env.org, query, 'kb', topK);
         return;
       }
 
@@ -539,6 +630,7 @@ vaultCommand
         query,
         top_k: topK,
       });
+      recordVaultSearchMarker(paths.stateDir, env.agentName, env.org, query, 'grep', topK);
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);
@@ -1377,7 +1469,8 @@ busCommand
   .option('--image <path>', 'Send a photo with caption')
   .option('--file <path>', 'Send a document/file with caption (any file type)')
   .option('--plain-text', 'Skip Telegram Markdown parsing entirely. Use this when the message contains unescaped _, *, backtick, or [ that would otherwise trip the Markdown parser. Without this flag, sendMessage still retries once with parse_mode disabled on a parse-entity error — so it is purely an opt-in to save the retry roundtrip.', false)
-  .action(async (chatId: string, message: string, opts: { image?: string; file?: string; plainText?: boolean }) => {
+  .option('--skip-memory-check', 'Bypass the Cortex memory reply gate. Use only for boot/status/ack messages, not substantive answers.', false)
+  .action(async (chatId: string, message: string, opts: { image?: string; file?: string; plainText?: boolean; skipMemoryCheck?: boolean }) => {
     // Resolve bot token: agent .env first, then process.env
     const env = resolveEnv();
     let botToken = '';
@@ -1402,6 +1495,28 @@ busCommand
     if (!botToken) {
       console.error('Error: BOT_TOKEN not configured. Set it in your agent .env file or as an environment variable to enable Telegram.');
       process.exit(1);
+    }
+
+    if (env.agentName && env.ctxRoot) {
+      const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+      const memoryGateError = checkTelegramMemoryGate(
+        env.ctxRoot,
+        paths.stateDir,
+        paths.logDir,
+        chatId,
+        message,
+        opts.skipMemoryCheck,
+      );
+      if (memoryGateError) {
+        try {
+          logEvent(paths, env.agentName, env.org, 'error', 'telegram_memory_gate_blocked', 'warning', {
+            chat_id: chatId,
+            preview: message.length > 120 ? message.slice(0, 120) + '…' : message,
+          });
+        } catch { /* non-fatal */ }
+        console.error(memoryGateError);
+        process.exit(1);
+      }
     }
 
     const api = new TelegramAPI(botToken);

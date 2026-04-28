@@ -41,9 +41,10 @@ Role: optional extension with four mechanisms:
 Cortex decision: implement these as Cortex-native operations, not as a separate cloned vault. Current mapping:
 
 - Fold operator: `cortextos bus vault fold` runs scribe's source-linked chat-research synthesis over raw transcript notes.
-- Deterministic page addresses: not yet applied globally because mass-editing the live Vault would create unnecessary churn. Add stable IDs to new Cortex-generated notes before broad backfill.
+- Deterministic page addresses: new transcript and chat-research notes get stable `id:` frontmatter; `cortextos bus vault lint` reports generated Cortex notes still missing IDs before any broad backfill.
 - Semantic tiling lint: `cortextos bus vault lint` now reports large notes that need tiling or fold rollups.
 - Boundary-first autoresearch: `cortextos bus vault lint` now reports repeated missing targets and useful orphans as research candidates; Graphify provides the heavier structural layer.
+- Runtime memory gate: inbound Telegram messages now tell agents to search Vault first, and `cortextos bus send-telegram` blocks substantive replies until a `cortextos bus vault search` has run after the latest inbound message.
 
 ### Karpathy LLM Wiki gist
 
@@ -117,7 +118,7 @@ Every agent uses the same rule:
 
 1. Capture raw truth into the transcript archive and append-only memory.
 2. Fold raw transcript history into source-linked research papers for retrieval.
-3. Before making a durable claim, run Query.
+3. Before making a substantive user reply or durable claim, run Query. The Telegram reply path enforces this for direct Logan messages.
 4. Promote useful findings through Ingest queues, not silent rewrites.
 5. Run Lint as suggestions, not automatic mutation.
 6. Run Graphify weekly to surface clusters, orphaned concepts, and high-centrality nodes.

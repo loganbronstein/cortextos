@@ -31,6 +31,7 @@ cortextos bus vault graphify
 - Capture raw truth first. Summaries never replace source transcripts.
 - Fold long raw transcript history into source-linked research papers before expecting agents to retrieve from it well.
 - Before writing a durable claim about Logan, a decision, a project state, or a standing rule, run `vault search`.
+- Telegram replies are runtime-gated: a substantive `send-telegram` reply to Logan fails unless `vault search` has run after the latest inbound message. Use `--skip-memory-check` only for pure boot/status/ack messages.
 - If prior memory conflicts, do not overwrite silently. Write the conflict with source links or route it to boss.
 - Ingest creates promote queues and suggested updates. It does not silently rewrite canonical memory.
 - Lint reports broken links, orphans, stale claims, missing provenance, and drift. It is suggestion-first.

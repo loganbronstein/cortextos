@@ -76,15 +76,18 @@ def main() -> None:
         if "Compound" in p.parts and p.stat().st_mtime < cutoff:
             stale_compound.append(p)
 
-    # 4. Files missing 'date' frontmatter (in Research/cortextos/ subtree only — agent-written files)
+    # 4. Files missing frontmatter or deterministic IDs (Research/cortextos subtree only — agent-written files)
     missing_frontmatter: list[Path] = []
+    missing_stable_id: list[Path] = []
     cortex_root = VAULT / "Research" / "cortextos"
     for p in md_files:
         try:
             if cortex_root in p.parents:
-                head = p.read_text(encoding="utf-8")[:200]
+                head = p.read_text(encoding="utf-8")[:500]
                 if not head.startswith("---"):
                     missing_frontmatter.append(p)
+                elif not re.search(r"^id:\s*\S+", head, re.M):
+                    missing_stable_id.append(p)
         except Exception:
             pass
 
@@ -136,7 +139,8 @@ def main() -> None:
         f"- Broken wikilinks: {len(broken_links)}",
         f"- Orphan files (zero incoming links, excluding Daily Notes): {len(orphans)}",
         f"- Stale Compound notes (>30 days unmodified): {len(stale_compound)}",
-        f"- Files missing date frontmatter: {len(missing_frontmatter)}",
+        f"- Files missing frontmatter: {len(missing_frontmatter)}",
+        f"- Files missing deterministic id: {len(missing_stable_id)}",
         f"- Large notes to tile or fold: {len(tiling_candidates)}",
         f"- Boundary research targets: {len(boundary_targets) + len(research_orphans)}",
         "",
@@ -180,6 +184,16 @@ def main() -> None:
         if len(missing_frontmatter) > 50:
             lines.append(f"... and {len(missing_frontmatter) - 50} more.")
 
+    lines += ["", "## Missing Deterministic IDs (Research/cortextos/ files)", "", "Agent-written Cortex notes should include a stable `id:` in frontmatter so references survive renames and folds.", ""]
+    if not missing_stable_id:
+        lines.append("(none)")
+    else:
+        for p in missing_stable_id[:50]:
+            rel = p.relative_to(VAULT)
+            lines.append(f"- `{rel}`")
+        if len(missing_stable_id) > 50:
+            lines.append(f"... and {len(missing_stable_id) - 50} more.")
+
     lines += ["", "## Large Notes To Tile Or Fold", "", "DragonScale-style tiling candidates. Review these for split pages, fold rollups, or a better index.", ""]
     if not tiling_candidates:
         lines.append("(none)")
@@ -205,7 +219,7 @@ def main() -> None:
     out.write_text("\n".join(lines), encoding="utf-8")
 
     print(f"Lint report: {out}")
-    print(f"Files: {len(md_files)} | Broken: {len(broken_links)} | Orphans: {len(orphans)} | Stale: {len(stale_compound)} | NoFrontmatter: {len(missing_frontmatter)} | Tile: {len(tiling_candidates)} | Boundary: {len(boundary_targets) + len(research_orphans)}")
+    print(f"Files: {len(md_files)} | Broken: {len(broken_links)} | Orphans: {len(orphans)} | Stale: {len(stale_compound)} | NoFrontmatter: {len(missing_frontmatter)} | NoStableId: {len(missing_stable_id)} | Tile: {len(tiling_candidates)} | Boundary: {len(boundary_targets) + len(research_orphans)}")
 
 
 if __name__ == "__main__":

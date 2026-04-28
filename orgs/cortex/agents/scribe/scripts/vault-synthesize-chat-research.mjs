@@ -120,6 +120,7 @@ const today = new Date().toISOString().slice(0, 10);
 const outPath = join(OUT_DIR, `${today}.md`);
 const body = [
   '---',
+  `id: cortex-chat-research-${today}`,
   'type: research-paper',
   'source_agent: scribe',
   'source_task: chat-research-synthesis',
@@ -158,6 +159,7 @@ while (body[body.length - 1] === '') body.pop();
 writeFileSync(outPath, `${body.join('\n')}\n`, 'utf-8');
 writeFileSync(join(OUT_DIR, 'Index.md'), [
   '---',
+  'id: cortex-chat-research-index',
   'type: research-paper-index',
   'source_agent: scribe',
   `last_updated_utc: ${new Date().toISOString()}`,

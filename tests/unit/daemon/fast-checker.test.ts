@@ -333,6 +333,8 @@ describe('FastChecker', () => {
       expect(result).toContain('[Your last message: "My previous reply to you"]');
       expect(result).toContain('=== TELEGRAM from [USER: alice] (chat_id:999) ===');
       expect(result).toContain('Hello there');
+      expect(result).toContain('Memory gate: before any substantive reply');
+      expect(result).toContain('cortextos bus vault search');
       expect(result).toContain('cortextos bus send-telegram 999');
     });
 
@@ -710,6 +712,7 @@ describe('FastChecker', () => {
       expect(result).toContain('caption:');
       expect(result).toContain('Check this out');
       expect(result).toContain('local_file: /tmp/telegram-images/20260403_abc12345678.jpg');
+      expect(result).toContain('Memory gate: before any substantive reply');
       expect(result).toContain("cortextos bus send-telegram 123456789 '<your reply>'");
     });
 

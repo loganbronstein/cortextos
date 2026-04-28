@@ -267,9 +267,16 @@ Reply using: cortextos bus send-message ${msg.from} normal '<your reply>' ${msg.
       : `\`\`\`\n${text}\n\`\`\``;
     return `=== TELEGRAM from [USER: ${from}] (chat_id:${chatId}) ===
 ${replyCx}${historyCx}${body}
-${lastSentCtx}Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
+${lastSentCtx}${FastChecker.memoryGateInstruction(chatId)}
+Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
 
 `;
+  }
+
+  private static memoryGateInstruction(chatId: string | number): string {
+    return `Memory gate: before any substantive reply, run \`cortextos bus vault search "<topic from Logan's message>" --no-rerank -n 5\`. ` +
+      `The reply command will fail if no Vault search has run after this inbound message. ` +
+      `Use \`--skip-memory-check\` only for pure boot/status/ack messages.`;
   }
 
   /**
@@ -319,6 +326,7 @@ caption:
 ${caption}
 \`\`\`
 local_file: ${imagePath}
+${FastChecker.memoryGateInstruction(chatId)}
 Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
 
 `;
@@ -342,6 +350,7 @@ ${caption}
 \`\`\`
 local_file: ${filePath}
 file_name: ${fileName}
+${FastChecker.memoryGateInstruction(chatId)}
 Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
 
 `;
@@ -361,6 +370,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     return `=== TELEGRAM VOICE from ${from} (chat_id:${chatId}) ===
 duration: ${dur}s
 local_file: ${filePath}
+${FastChecker.memoryGateInstruction(chatId)}
 Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
 
 `;
@@ -387,6 +397,7 @@ ${caption}
 duration: ${dur}s
 local_file: ${filePath}
 file_name: ${fileName}
+${FastChecker.memoryGateInstruction(chatId)}
 Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
 
 `;

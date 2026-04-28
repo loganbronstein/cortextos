@@ -193,6 +193,7 @@ function writeTranscript(p) {
   const searchableText = extractSearchText(raw);
   const redactedRaw = redact(raw);
   const body = `---\n` +
+    `id: cortex-transcript-${keyForPath(p).slice(0, 16)}\n` +
     `type: transcript\n` +
     `source_agent: scribe\n` +
     `source_type: ${kind}\n` +
@@ -230,6 +231,7 @@ function writeTranscript(p) {
 function updateIndex(results) {
   const lines = [
     '---',
+    'id: cortex-transcript-index',
     'type: transcript-index',
     'source_agent: scribe',
     `last_updated_utc: ${new Date().toISOString()}`,

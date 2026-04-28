@@ -18,4 +18,4 @@ cortextos bus vault lint
 cortextos bus vault graphify
 ```
 
-Rules: capture raw truth first, fold transcripts into source-linked research papers, query before durable claims, promote through queues, lint as suggestions, graphify weekly, and preserve one-writer ownership.
+Rules: capture raw truth first, fold transcripts into source-linked research papers, query before durable claims, promote through queues, lint as suggestions, graphify weekly, and preserve one-writer ownership. Substantive Telegram replies are runtime-gated: `send-telegram` fails unless `vault search` has run after the latest inbound message.
