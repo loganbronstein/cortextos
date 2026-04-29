@@ -33,12 +33,18 @@ export function resolveEnv(overrides?: Partial<CtxEnv>): CtxEnv {
 
   const cwdProjectRoot = detectProjectRoot(process.cwd());
 
-  const frameworkRoot =
+  // Explicit CTX_FRAMEWORK_ROOT (overrides arg, env var, or .cortextos-env file) is the
+  // authoritative signal for the framework root. When the caller sets it deliberately
+  // (test harness, alt spawn) it must also win over a CTX_PROJECT_ROOT that may have
+  // been inherited from a parent agent process. This matches the precedence used in
+  // src/cli/ecosystem.ts, src/bus/agents.ts, and src/cli/bus.ts.
+  const explicitFrameworkRoot =
     overrides?.frameworkRoot ||
     process.env.CTX_FRAMEWORK_ROOT ||
     envFile.CTX_FRAMEWORK_ROOT ||
-    cwdProjectRoot ||
     '';
+
+  const frameworkRoot = explicitFrameworkRoot || cwdProjectRoot || '';
 
   const agentName =
     overrides?.agentName ||
@@ -48,9 +54,9 @@ export function resolveEnv(overrides?: Partial<CtxEnv>): CtxEnv {
 
   const projectRoot =
     overrides?.projectRoot ||
+    explicitFrameworkRoot ||
     process.env.CTX_PROJECT_ROOT ||
     envFile.CTX_PROJECT_ROOT ||
-    frameworkRoot ||
     cwdProjectRoot ||
     '';
 
