@@ -14,6 +14,9 @@ describe('bus memory command contract', () => {
     expect(busSource).toContain(".command('lint')");
     expect(busSource).toContain(".command('fold')");
     expect(busSource).toContain(".command('graphify')");
+    expect(busSource).toContain(".command('promote')");
+    expect(busSource).toContain('resolveInside');
+    expect(busSource).toContain('vault_promote');
   });
 
   it('keeps first-class Neon operational memory commands wired into cortextos bus', () => {
@@ -30,4 +33,3 @@ describe('bus memory command contract', () => {
     expect(busSource).toContain('telegram_memory_gate_blocked');
   });
 });
-

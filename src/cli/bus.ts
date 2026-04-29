@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { spawnSync, execFileSync } from 'child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
+import { dirname, join, relative, resolve } from 'path';
 import { sendMessage, checkInbox, ackInbox } from '../bus/message.js';
 import { validateAgentName } from '../utils/validate.js';
 import { createTask, updateTask, completeTask, claimTask, readTaskAudit, checkTaskDependencies, compactTasks, listTasks, checkStaleTasks, archiveTasks, checkHumanTasks } from '../bus/task.js';
@@ -457,6 +457,16 @@ function resolveVaultRoot(
   return DEFAULT_VAULT_ROOT;
 }
 
+function resolveInside(root: string, unsafePath: string): string {
+  const resolvedRoot = resolve(root);
+  const resolvedPath = resolve(resolvedRoot, unsafePath);
+  const rel = relative(resolvedRoot, resolvedPath);
+  if (rel === '' || rel === '..' || rel.startsWith('..') || rel.startsWith('/')) {
+    throw new Error(`Path escapes allowed root: ${unsafePath}`);
+  }
+  return resolvedPath;
+}
+
 function commandAvailable(command: string): boolean {
   const result = spawnSync('bash', ['-lc', `command -v ${command}`], {
     encoding: 'utf-8',
@@ -747,6 +757,69 @@ vaultCommand
         target,
         cluster_only: opts.clusterOnly ?? false,
       });
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+vaultCommand
+  .command('promote')
+  .description('Promote a confirmed agent Inbox item into that agent\'s owned Cortex vault tree')
+  .argument('<agent>', 'Agent that owns the source and target vault subtree')
+  .argument('<source-path>', 'Source path relative to orgs/<org>/agents/<agent>/vault')
+  .argument('<target-path>', 'Target path relative to orgs/<org>/agents/<agent>/vault')
+  .option('--copy', 'Copy instead of move', false)
+  .option('--force', 'Overwrite target if it already exists', false)
+  .option('--dry-run', 'Print the planned promotion without writing', false)
+  .action((agent: string, sourcePath: string, targetPath: string, opts: { copy?: boolean; force?: boolean; dryRun?: boolean }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    try {
+      validateAgentName(agent);
+      const frameworkRoot = env.frameworkRoot || process.cwd();
+      const agentVault = join(frameworkRoot, 'orgs', env.org, 'agents', agent, 'vault');
+      if (!existsSync(agentVault)) {
+        throw new Error(`Agent vault not found: ${agentVault}. Run scripts/vault-restructure.sh --agent ${agent} first.`);
+      }
+
+      const source = resolveInside(agentVault, sourcePath);
+      const target = resolveInside(agentVault, targetPath);
+      if (!existsSync(source)) {
+        throw new Error(`Source does not exist: ${sourcePath}`);
+      }
+      if (existsSync(target) && !opts.force) {
+        throw new Error(`Target already exists: ${targetPath}. Use --force only after reviewing the existing file.`);
+      }
+
+      if (opts.dryRun) {
+        console.log(JSON.stringify({
+          dry_run: true,
+          operation: opts.copy ? 'copy' : 'move',
+          agent,
+          source,
+          target,
+        }, null, 2));
+        return;
+      }
+
+      mkdirSync(dirname(target), { recursive: true });
+      if (opts.copy) copyFileSync(source, target);
+      else renameSync(source, target);
+
+      logEvent(paths, env.agentName, env.org, 'action', 'vault_promote', 'info', {
+        agent,
+        source_path: sourcePath,
+        target_path: targetPath,
+        operation: opts.copy ? 'copy' : 'move',
+      });
+      console.log(JSON.stringify({
+        promoted: true,
+        operation: opts.copy ? 'copy' : 'move',
+        agent,
+        source,
+        target,
+      }, null, 2));
     } catch (err) {
       console.error((err as Error).message);
       process.exit(1);
