@@ -75,6 +75,10 @@ function makeRequest(url: string): NextRequest {
   return new NextRequest(new URL(url, 'http://localhost'));
 }
 
+function recentIso(minutesAgo: number): string {
+  return new Date(Date.now() - minutesAgo * 60 * 1000).toISOString();
+}
+
 // ---------------------------------------------------------------------------
 // GET /api/comms/feed
 // ---------------------------------------------------------------------------
@@ -124,8 +128,8 @@ describe('GET /api/comms/feed', () => {
 describe('GET /api/comms/channels', () => {
   it('groups messages by pair and reports last-message metadata', async () => {
     writeHistory([
-      { id: 'm1', from: 'boris', to: 'nick', priority: 'normal', timestamp: '2026-04-15T09:00:00Z', text: 'hi', reply_to: null },
-      { id: 'm2', from: 'nick', to: 'boris', priority: 'normal', timestamp: '2026-04-15T10:00:00Z', text: 'reply', reply_to: null },
+      { id: 'm1', from: 'boris', to: 'nick', priority: 'normal', timestamp: recentIso(10), text: 'hi', reply_to: null },
+      { id: 'm2', from: 'nick', to: 'boris', priority: 'normal', timestamp: recentIso(5), text: 'reply', reply_to: null },
     ]);
 
     const res = await channels.GET(makeRequest('/api/comms/channels'));

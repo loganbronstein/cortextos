@@ -87,3 +87,6 @@ Org-wide single source of truth scaffold. My responsibilities:
 
 ## Logan's brain
 Vault root: `~/Sale Advisor/Vault/`. He calls it his "second brain" — never call it anything else, never describe it as "becoming" one. It already is.
+
+## Cron-fire telemetry rule (added 2026-04-28, from own conflict scan G1)
+At the end of EVERY cron-triggered routine, call `cortextos bus update-cron-fire <name>` so the daemon's gap detector does not misfire. Names match `config.json`: `heartbeat`, `vault-agent-log-sync`, `daily-memory-brief`, `conflict-scan`, `cortex-index-refresh`. Boss + analyst + coder already have this rule. Marketing still missing per the same scan.

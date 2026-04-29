@@ -772,7 +772,7 @@ describe('FastChecker', () => {
     it('fires exec after bootstrap at 50-min interval', async () => {
       const { execFile } = await import('child_process');
       const agent = createMockAgent('my-agent');
-      const checker = new FastChecker(agent, paths, '/tmp/framework');
+      const checker = new FastChecker(agent, paths, '/tmp/framework', { pollInterval: 24 * 60 * 60 * 1000 });
       checker.start();
       await vi.advanceTimersByTimeAsync(50 * 60 * 1000);
       expect(execFile).toHaveBeenCalledWith(
@@ -788,7 +788,7 @@ describe('FastChecker', () => {
       const { execFile } = await import('child_process');
       const execMock = execFile as ReturnType<typeof vi.fn>;
       const agent = createMockAgent('my-agent');
-      const checker = new FastChecker(agent, paths, '/tmp/framework');
+      const checker = new FastChecker(agent, paths, '/tmp/framework', { pollInterval: 24 * 60 * 60 * 1000 });
       checker.start();
       await vi.advanceTimersByTimeAsync(50 * 60 * 1000);
       const callsBefore = execMock.mock.calls.length;
