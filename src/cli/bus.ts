@@ -572,7 +572,7 @@ busCommand
 
 const vaultCommand = busCommand
   .command('vault')
-  .description('Karpathy-style Obsidian memory operations: ingest, query/search, route, lint, and graphify');
+  .description('Karpathy-style Obsidian memory operations: ingest, query/search, route, lint, graphify, and lazy method runs');
 
 vaultCommand
   .command('search')
@@ -742,6 +742,50 @@ vaultCommand
       logEvent(paths, env.agentName, env.org, 'action', 'vault_route', 'info', {
         tool: 'memory-domain-router',
         vault_root: vaultRoot,
+      });
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+vaultCommand
+  .command('lazy')
+  .description('Run Logan\'s canonical Lazy Obsidian Method: capture raw -> process -> link -> compound, then verify Graphify and QMD')
+  .option('--vault-root <path>', 'Override the Vault root')
+  .option('--sync-all', 'Backfill every detected transcript/log source instead of the normal incremental window', false)
+  .option('--skip-graphify', 'Skip the Graphify cluster refresh for faster daily runs', false)
+  .option('--skip-qmd', 'Skip the QMD status check', false)
+  .option('--skip-qmd-embed', 'Skip QMD vector embedding refresh after re-indexing', false)
+  .action((opts: { vaultRoot?: string; syncAll?: boolean; skipGraphify?: boolean; skipQmd?: boolean; skipQmdEmbed?: boolean }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    const vaultRoot = resolveVaultRoot(opts.vaultRoot, env.frameworkRoot, env.org);
+    const script = join(env.frameworkRoot || process.cwd(), 'orgs', env.org, 'agents', 'scribe', 'scripts', 'vault-lazy-obsidian.mjs');
+    try {
+      if (!existsSync(script)) {
+        throw new Error(`Required Lazy Obsidian script not found: ${script}`);
+      }
+      execFileSync('node', [script], {
+        cwd: env.frameworkRoot || process.cwd(),
+        stdio: 'inherit',
+        env: {
+          ...process.env,
+          VAULT: vaultRoot,
+          CORTEX_ROOT: env.frameworkRoot || process.cwd(),
+          LAZY_SYNC_ALL: opts.syncAll ? '1' : '0',
+          LAZY_SKIP_GRAPHIFY: opts.skipGraphify ? '1' : '0',
+          LAZY_SKIP_QMD: opts.skipQmd ? '1' : '0',
+          LAZY_SKIP_QMD_EMBED: opts.skipQmdEmbed ? '1' : '0',
+        },
+      });
+      logEvent(paths, env.agentName, env.org, 'action', 'vault_lazy_obsidian', 'info', {
+        tool: 'lazy-obsidian-method',
+        vault_root: vaultRoot,
+        sync_all: opts.syncAll ?? false,
+        graphify: !(opts.skipGraphify ?? false),
+        qmd: !(opts.skipQmd ?? false),
+        qmd_embed: !(opts.skipQmdEmbed ?? false),
       });
     } catch (err) {
       console.error((err as Error).message);

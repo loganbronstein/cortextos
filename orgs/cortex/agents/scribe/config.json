@@ -36,6 +36,24 @@
       "prompt": "Run node /Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/scripts/vault-synthesize-chat-research.mjs silently after transcript sync. It creates a source-linked research paper at Vault/Research/cortextos/chat-research/YYYY-MM-DD.md from recent transcript archive notes. Do NOT send Telegram unless it finds a critical blocker."
     },
     {
+      "name": "lazy-obsidian-daily-ingest",
+      "type": "recurring",
+      "cron": "5 8 * * *",
+      "prompt": "Run cortextos bus vault lazy --skip-graphify silently. This is Logan's canonical Lazy Obsidian Method daily ingest: capture raw chats/logs, process them into source-linked research, route useful claims to natural Obsidian domains, refresh wikilinks, and write Vault/Reports/lazy-obsidian/YYYY-MM-DD.md. Do NOT send Telegram unless the run fails."
+    },
+    {
+      "name": "lazy-obsidian-nightly-review",
+      "type": "recurring",
+      "cron": "20 22 * * *",
+      "prompt": "Run cortextos bus vault lazy --skip-graphify silently, then run cortextos bus vault lint. This is the nightly review layer: daily notes, lessons, agent logs, and memory get refreshed into dashboards, route queues, and memory-health reports. Do NOT send Telegram unless a critical blocker exists."
+    },
+    {
+      "name": "lazy-obsidian-weekly-vault",
+      "type": "recurring",
+      "cron": "13 8 * * 0",
+      "prompt": "Run cortextos bus vault lazy --sync-all silently, then run cortextos bus vault lint. This is the weekly vault layer: full transcript/log backfill, Graphify cluster refresh, QMD verification, topic gaps, and next-step items. Do NOT send Telegram unless the weekly run fails."
+    },
+    {
       "name": "daily-memory-brief",
       "type": "recurring",
       "cron": "35 7 * * *",

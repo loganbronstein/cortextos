@@ -14,6 +14,7 @@ describe('bus memory command contract', () => {
     expect(busSource).toContain(".command('lint')");
     expect(busSource).toContain(".command('fold')");
     expect(busSource).toContain(".command('route')");
+    expect(busSource).toContain(".command('lazy')");
     expect(busSource).toContain(".command('graphify')");
     expect(busSource).toContain(".command('wikilinks')");
     expect(busSource).toContain(".command('promote')");
@@ -46,6 +47,22 @@ describe('bus memory command contract', () => {
     expect(routeScript).toContain('Pricing and Valuation');
     expect(routeScript).toContain('Business Strategy and Ideas');
     expect(routeScript).toContain('Do not dump all knowledge into Cortex');
+  });
+
+  it('keeps the canonical Lazy Obsidian Method wired as an end-to-end runner', () => {
+    expect(busSource).toContain('vault-lazy-obsidian.mjs');
+    expect(busSource).toContain('vault_lazy_obsidian');
+    const lazyScript = readFileSync(
+      join(repoRoot, 'orgs', 'cortex', 'agents', 'scribe', 'scripts', 'vault-lazy-obsidian.mjs'),
+      'utf-8',
+    );
+    expect(lazyScript).toContain('Capture raw -> process -> link -> compound');
+    expect(lazyScript).toContain('PARA - Projects, Areas, Resources, Archive');
+    expect(lazyScript).toContain('Graphify - clusters, god nodes, graph.json, graph.html, GRAPH_REPORT.md');
+    expect(lazyScript).toContain('QMD - markdown retrieval as the vault grows');
+    expect(lazyScript).toContain("['update']");
+    expect(lazyScript).toContain("['embed', '--max-docs-per-batch', '100', '--max-batch-mb', '20']");
+    expect(lazyScript).toContain('QMD Vault context is configured');
   });
 
   it('keeps first-class Neon operational memory commands wired into cortextos bus', () => {
