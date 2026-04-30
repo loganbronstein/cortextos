@@ -1,0 +1,80 @@
+{
+  "permissions": {
+    "allow": [
+      "*"
+    ],
+    "defaultMode": "bypassPermissions"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "cortextos bus hook-context-status",
+    "refreshInterval": 5,
+    "timeout": 2
+  },
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cortextos crash-alert",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/loganbronstein/cortextos/orgs/cortex/agents/boss/.claude/hooks/pre-compact-snapshot.sh",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "cortextos bus hook-extract-facts",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cortextos bus hook-session-restore",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cortextos bus hook-loop-detector",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/loganbronstein/cortextos/orgs/cortex/agents/boss/scripts/telegram-guardrail.py",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "python3 /Users/loganbronstein/cortextos/orgs/cortex/agents/boss/scripts/action-grader.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

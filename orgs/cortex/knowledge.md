@@ -39,6 +39,7 @@ Shared facts, context, and institutional knowledge for all agents in this org. R
 - Do not dump every durable note into `Vault/Cortex/`. Cortex is the agent operating-memory layer. Domain knowledge should route to its natural Vault home: pricing to `Research/Pricing/` or `Pricer Accuracy.md`, Sorzo to `Research/Sorzo/`, marketing to `Marketing/`, client/ops facts to `Clients/`, `Leads/`, `Operations.md`, decisions/rules to `Decisions.md`, `Rules/`, and business ideas to `Ideas.md`, `Revenue Model.md`, or `Launch Plan.md`.
 - Scribe/boss should use `cortextos bus vault route` after `vault fold` to produce a source-linked routing queue before promoting memory into canonical domain notes.
 - Graphify is a required memory layer, not replaceable by simple wikilink scanning. Agents should use `/Users/loganbronstein/Sale Advisor/Vault/graphify-out/GRAPH_REPORT.md` for community/god-node orientation and `graphify query` for graph traversal. Wikilinks remain the Obsidian-native source/domain linking layer; Karpathy Ingest/Query/Lint remains the operating loop.
+- AscendOps review 2026-04-30: reuse framework-level reliability patterns only, not property-management niche workflows. Adopted compaction fact extraction + SessionStart restore and loop-detector hooks; hold larger vendor-adapter, A2A, Supabase bus, and property-management skill imports until a separate architecture review.
 
 ## Key Links
 

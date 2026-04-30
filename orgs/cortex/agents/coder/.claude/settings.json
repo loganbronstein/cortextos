@@ -1,13 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash",
-      "Read",
-      "Edit",
-      "Write",
-      "WebFetch",
-      "WebSearch"
-    ]
+      "*"
+    ],
+    "defaultMode": "bypassPermissions"
   },
   "statusLine": {
     "type": "command",
@@ -16,54 +12,12 @@
     "timeout": 2
   },
   "hooks": {
-    "PermissionRequest": [
-      {
-        "matcher": "ExitPlanMode",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "cortextos bus hook-planmode-telegram",
-            "timeout": 1860
-          }
-        ]
-      },
+    "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "cortextos bus hook-permission-telegram",
-            "timeout": 1860
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "cortextos bus hook-loop-detector",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "AskUserQuestion",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "cortextos bus hook-ask-telegram",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "cortextos bus hook-session-restore",
+            "command": "cortextos bus hook-idle-flag",
             "timeout": 5
           }
         ]
@@ -80,12 +34,34 @@
         ]
       }
     ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cortextos bus hook-session-restore",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cortextos bus hook-loop-detector",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "PreCompact": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "cortextos bus hook-compact-telegram",
+            "command": "bash /Users/loganbronstein/cortextos/orgs/cortex/agents/coder/.claude/hooks/pre-compact-snapshot.sh",
             "timeout": 10
           },
           {
