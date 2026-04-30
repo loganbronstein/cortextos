@@ -721,39 +721,59 @@ vaultCommand
 
 vaultCommand
   .command('graphify')
-  .description('Run safishamsi/graphify over the Vault or an agent memory subtree')
+  .description('Generate an Obsidian wikilink graph report over the Vault or an agent memory subtree')
   .option('--agent <name>', 'Agent subtree to graphify when orgs/<org>/agents/<agent>/vault exists')
   .option('--path <path>', 'Explicit path to graphify')
   .option('--vault-root <path>', 'Override the Vault root')
-  .option('--cluster-only', 'Only re-run clustering against Vault/graphify-out/graph.json')
+  .option('--cluster-only', 'Only re-run clustering against Vault/graphify-out/graph.json when using external graphify fallback')
   .action((opts: { agent?: string; path?: string; vaultRoot?: string; clusterOnly?: boolean }) => {
     const env = resolveEnv();
     const paths = resolvePaths(env.agentName, env.instanceId, env.org);
     const vaultRoot = resolveVaultRoot(opts.vaultRoot, env.frameworkRoot, env.org);
-    if (!commandAvailable('graphify')) {
-      console.error('graphify is not installed or not on PATH.');
-      process.exit(1);
-    }
     try {
       let target = opts.path || vaultRoot;
       if (!opts.path && opts.agent) {
         validateAgentName(opts.agent);
+        const visibleAgentVault = join(vaultRoot, 'Cortex', opts.agent);
         const agentVault = join(env.frameworkRoot || process.cwd(), 'orgs', env.org, 'agents', opts.agent, 'vault');
-        target = existsSync(agentVault) ? agentVault : vaultRoot;
+        target = existsSync(visibleAgentVault) ? visibleAgentVault : existsSync(agentVault) ? agentVault : vaultRoot;
       }
-      if (opts.clusterOnly) {
+
+      const obsidianGraphScript = join(
+        env.frameworkRoot || process.cwd(),
+        'orgs',
+        env.org,
+        'agents',
+        'boss',
+        'scripts',
+        'vault-graphify.mjs',
+      );
+      if (existsSync(obsidianGraphScript) && !opts.clusterOnly) {
+        const args = [obsidianGraphScript, '--target', target, '--vault-root', vaultRoot];
+        if (opts.agent) args.push('--agent', opts.agent);
+        execFileSync('node', args, {
+          cwd: vaultRoot,
+          stdio: 'inherit',
+          env: {
+            ...process.env,
+            VAULT: vaultRoot,
+          },
+        });
+      } else if (opts.clusterOnly && commandAvailable('graphify')) {
         execFileSync('graphify', ['cluster-only', join(vaultRoot, 'graphify-out', 'graph.json')], {
           cwd: vaultRoot,
           stdio: 'inherit',
         });
-      } else {
+      } else if (commandAvailable('graphify')) {
         execFileSync('graphify', ['update', target], {
           cwd: vaultRoot,
           stdio: 'inherit',
         });
+      } else {
+        throw new Error(`No graph implementation available. Missing script: ${obsidianGraphScript}`);
       }
       logEvent(paths, env.agentName, env.org, 'action', 'vault_graphify', 'info', {
-        tool: 'graphify',
+        tool: existsSync(obsidianGraphScript) && !opts.clusterOnly ? 'vault-graphify' : 'graphify',
         target,
         cluster_only: opts.clusterOnly ?? false,
       });

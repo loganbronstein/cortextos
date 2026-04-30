@@ -19,6 +19,18 @@ describe('bus memory command contract', () => {
     expect(busSource).toContain('vault_promote');
   });
 
+  it('keeps the Obsidian wikilink graph pass available for Markdown vaults', () => {
+    expect(busSource).toContain('vault-graphify.mjs');
+    expect(busSource).toContain('vault_graphify');
+    const graphScript = readFileSync(
+      join(repoRoot, 'orgs', 'cortex', 'agents', 'boss', 'scripts', 'vault-graphify.mjs'),
+      'utf-8',
+    );
+    expect(graphScript).toContain('WIKILINK');
+    expect(graphScript).toContain('isSymbolicLink');
+    expect(graphScript).toContain('cortextos-graph');
+  });
+
   it('keeps first-class Neon operational memory commands wired into cortextos bus', () => {
     expect(busSource).toContain(".command('log-episode')");
     expect(busSource).toContain(".command('log-decision')");
