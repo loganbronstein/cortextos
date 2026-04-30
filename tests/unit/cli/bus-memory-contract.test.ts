@@ -13,6 +13,7 @@ describe('bus memory command contract', () => {
     expect(busSource).toContain(".command('ingest')");
     expect(busSource).toContain(".command('lint')");
     expect(busSource).toContain(".command('fold')");
+    expect(busSource).toContain(".command('route')");
     expect(busSource).toContain(".command('graphify')");
     expect(busSource).toContain(".command('promote')");
     expect(busSource).toContain('resolveInside');
@@ -29,6 +30,18 @@ describe('bus memory command contract', () => {
     expect(graphScript).toContain('WIKILINK');
     expect(graphScript).toContain('isSymbolicLink');
     expect(graphScript).toContain('cortextos-graph');
+  });
+
+  it('keeps the memory domain router available so Cortex is not the catch-all destination', () => {
+    expect(busSource).toContain('vault-route-memory.mjs');
+    expect(busSource).toContain('vault_route');
+    const routeScript = readFileSync(
+      join(repoRoot, 'orgs', 'cortex', 'agents', 'scribe', 'scripts', 'vault-route-memory.mjs'),
+      'utf-8',
+    );
+    expect(routeScript).toContain('Pricing and Valuation');
+    expect(routeScript).toContain('Business Strategy and Ideas');
+    expect(routeScript).toContain('Do not dump all knowledge into Cortex');
   });
 
   it('keeps first-class Neon operational memory commands wired into cortextos bus', () => {

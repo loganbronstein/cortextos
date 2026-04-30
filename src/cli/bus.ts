@@ -572,7 +572,7 @@ busCommand
 
 const vaultCommand = busCommand
   .command('vault')
-  .description('Karpathy-style Obsidian memory operations: ingest, query/search, lint, and graphify');
+  .description('Karpathy-style Obsidian memory operations: ingest, query/search, route, lint, and graphify');
 
 vaultCommand
   .command('search')
@@ -711,6 +711,36 @@ vaultCommand
       });
       logEvent(paths, env.agentName, env.org, 'action', 'vault_fold', 'info', {
         tool: 'chat-research-fold',
+        vault_root: vaultRoot,
+      });
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+vaultCommand
+  .command('route')
+  .description('Route folded memory into the right Obsidian domain targets instead of dumping everything into Cortex')
+  .option('--vault-root <path>', 'Override the Vault root')
+  .action((opts: { vaultRoot?: string }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    const vaultRoot = resolveVaultRoot(opts.vaultRoot, env.frameworkRoot, env.org);
+    const script = join(env.frameworkRoot || process.cwd(), 'orgs', env.org, 'agents', 'scribe', 'scripts', 'vault-route-memory.mjs');
+    try {
+      if (!existsSync(script)) {
+        throw new Error(`Required vault route script not found: ${script}`);
+      }
+      execFileSync('node', [script], {
+        stdio: 'inherit',
+        env: {
+          ...process.env,
+          VAULT: vaultRoot,
+        },
+      });
+      logEvent(paths, env.agentName, env.org, 'action', 'vault_route', 'info', {
+        tool: 'memory-domain-router',
         vault_root: vaultRoot,
       });
     } catch (err) {
