@@ -750,13 +750,12 @@ vaultCommand
   });
 
 vaultCommand
-  .command('graphify')
-  .description('Generate an Obsidian wikilink graph report over the Vault or an agent memory subtree')
+  .command('wikilinks')
+  .description('Generate an Obsidian-native wikilink report. This is separate from Graphify.')
   .option('--agent <name>', 'Agent subtree to graphify when orgs/<org>/agents/<agent>/vault exists')
   .option('--path <path>', 'Explicit path to graphify')
   .option('--vault-root <path>', 'Override the Vault root')
-  .option('--cluster-only', 'Only re-run clustering against Vault/graphify-out/graph.json when using external graphify fallback')
-  .action((opts: { agent?: string; path?: string; vaultRoot?: string; clusterOnly?: boolean }) => {
+  .action((opts: { agent?: string; path?: string; vaultRoot?: string }) => {
     const env = resolveEnv();
     const paths = resolvePaths(env.agentName, env.instanceId, env.org);
     const vaultRoot = resolveVaultRoot(opts.vaultRoot, env.frameworkRoot, env.org);
@@ -778,7 +777,7 @@ vaultCommand
         'scripts',
         'vault-graphify.mjs',
       );
-      if (existsSync(obsidianGraphScript) && !opts.clusterOnly) {
+      if (existsSync(obsidianGraphScript)) {
         const args = [obsidianGraphScript, '--target', target, '--vault-root', vaultRoot];
         if (opts.agent) args.push('--agent', opts.agent);
         execFileSync('node', args, {
@@ -789,23 +788,50 @@ vaultCommand
             VAULT: vaultRoot,
           },
         });
-      } else if (opts.clusterOnly && commandAvailable('graphify')) {
-        execFileSync('graphify', ['cluster-only', join(vaultRoot, 'graphify-out', 'graph.json')], {
-          cwd: vaultRoot,
-          stdio: 'inherit',
-        });
-      } else if (commandAvailable('graphify')) {
-        execFileSync('graphify', ['update', target], {
-          cwd: vaultRoot,
+      } else {
+        throw new Error(`Required wikilink graph script not found: ${obsidianGraphScript}`);
+      }
+      logEvent(paths, env.agentName, env.org, 'action', 'vault_wikilinks', 'info', {
+        tool: 'vault-graphify',
+        target,
+      });
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+vaultCommand
+  .command('graphify')
+  .description('Run safishamsi/graphify against Logan\'s Vault graphify-out graph')
+  .option('--path <path>', 'Vault or corpus root containing graphify-out/', DEFAULT_VAULT_ROOT)
+  .option('--cluster-only', 'Re-run clustering/report generation against the existing Graphify graph', true)
+  .action((opts: { path?: string; clusterOnly?: boolean }) => {
+    const env = resolveEnv();
+    const paths = resolvePaths(env.agentName, env.instanceId, env.org);
+    const target = resolve(opts.path || DEFAULT_VAULT_ROOT);
+    try {
+      if (!commandAvailable('graphify')) {
+        throw new Error('graphify is not installed or not on PATH. Install safishamsi/graphify via `pipx install graphifyy && graphify install --platform codex`.');
+      }
+      if (!existsSync(join(target, 'graphify-out', 'graph.json'))) {
+        throw new Error(`Graphify graph not found at ${join(target, 'graphify-out', 'graph.json')}. Run the Graphify skill first: $graphify ${target}`);
+      }
+      if (opts.clusterOnly !== false) {
+        execFileSync('graphify', ['cluster-only', '.'], {
+          cwd: target,
           stdio: 'inherit',
         });
       } else {
-        throw new Error(`No graph implementation available. Missing script: ${obsidianGraphScript}`);
+        execFileSync('graphify', ['update', target], {
+          cwd: target,
+          stdio: 'inherit',
+        });
       }
       logEvent(paths, env.agentName, env.org, 'action', 'vault_graphify', 'info', {
-        tool: existsSync(obsidianGraphScript) && !opts.clusterOnly ? 'vault-graphify' : 'graphify',
+        tool: 'safishamsi/graphify',
         target,
-        cluster_only: opts.clusterOnly ?? false,
+        cluster_only: opts.clusterOnly !== false,
       });
     } catch (err) {
       console.error((err as Error).message);

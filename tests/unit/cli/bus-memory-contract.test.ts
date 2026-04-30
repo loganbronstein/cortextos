@@ -15,14 +15,18 @@ describe('bus memory command contract', () => {
     expect(busSource).toContain(".command('fold')");
     expect(busSource).toContain(".command('route')");
     expect(busSource).toContain(".command('graphify')");
+    expect(busSource).toContain(".command('wikilinks')");
     expect(busSource).toContain(".command('promote')");
     expect(busSource).toContain('resolveInside');
     expect(busSource).toContain('vault_promote');
   });
 
-  it('keeps the Obsidian wikilink graph pass available for Markdown vaults', () => {
-    expect(busSource).toContain('vault-graphify.mjs');
+  it('keeps Graphify and Obsidian wikilinks as separate memory layers', () => {
+    expect(busSource).toContain('safishamsi/graphify');
+    expect(busSource).toContain('graphify-out');
     expect(busSource).toContain('vault_graphify');
+    expect(busSource).toContain('vault-graphify.mjs');
+    expect(busSource).toContain('vault_wikilinks');
     const graphScript = readFileSync(
       join(repoRoot, 'orgs', 'cortex', 'agents', 'boss', 'scripts', 'vault-graphify.mjs'),
       'utf-8',
