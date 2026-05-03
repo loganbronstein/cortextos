@@ -5,6 +5,20 @@
  * 1. Same tool and same args too many times.
  * 2. Two tools ping-ponging repeatedly.
  *
+ * Blocked calls are NOT recorded in history — the original design counted
+ * rejections toward the alternation window, which made the wedge
+ * self-perpetuating. The current design only records calls that pass.
+ *
+ * History is also time-windowed: entries older than {HISTORY_RETAIN_MS}
+ * are filtered out before each decision. This prevents a stale prior-session
+ * tail (which persists in the on-disk state file) from blocking the first
+ * tool call of a new session.
+ *
+ * After {EMERGENCY_ESCAPE_MS} of being continuously blocked, the next
+ * incoming call is allowed exactly once so the agent can send a Telegram
+ * alert. Subsequent calls keep blocking until the workflow itself changes
+ * (the next allowed call resets the blocked-window state).
+ *
  * State: {ctxRoot}/state/{agentName}/loop-detector.json
  */
 
@@ -17,8 +31,15 @@ import { readStdin, parseHookInput } from './index.js';
 export const HISTORY_SIZE = 30;
 export const REPETITION_BLOCK = 15;
 export const PINGPONG_WINDOW = 12;
-export const PINGPONG_BLOCK = 14;
+export const PINGPONG_BLOCK = 24;
 export const PINGPONG_DOMINANCE = 0.8;
+export const EMERGENCY_ESCAPE_MS = 30 * 60 * 1000;
+// Entries older than this fall out of the active window. Without this,
+// alternation history persists across session restarts and the first
+// tool call after boot trips ping-pong against stale prior-session state.
+// Real loops fire fast (sub-second per call), so 60s is plenty of room
+// to detect them while letting any normal idle gap clear stale history.
+export const HISTORY_RETAIN_MS = 60 * 1000;
 
 export interface ToolCallRecord {
   toolName: string;
@@ -28,6 +49,8 @@ export interface ToolCallRecord {
 
 export interface LoopDetectorState {
   history: ToolCallRecord[];
+  firstBlockedAt?: number | null;
+  emergencyEscapeUsed?: boolean;
 }
 
 function sortObjectKeys(value: unknown): unknown {
@@ -58,7 +81,7 @@ function statePath(stateDir: string): string {
 
 export function loadState(stateDir: string): LoopDetectorState {
   const p = statePath(stateDir);
-  if (!existsSync(p)) return { history: [] };
+  if (!existsSync(p)) return { history: [], firstBlockedAt: null, emergencyEscapeUsed: false };
   try {
     const parsed = JSON.parse(readFileSync(p, 'utf-8')) as Partial<LoopDetectorState>;
     const rawHistory = Array.isArray(parsed.history) ? parsed.history : [];
@@ -70,9 +93,13 @@ export function loadState(stateDir: string): LoopDetectorState {
         typeof (r as ToolCallRecord).argsHash === 'string' &&
         typeof (r as ToolCallRecord).ts === 'number',
     );
-    return { history };
+    const firstBlockedAt =
+      typeof parsed.firstBlockedAt === 'number' ? parsed.firstBlockedAt : null;
+    const emergencyEscapeUsed =
+      typeof parsed.emergencyEscapeUsed === 'boolean' ? parsed.emergencyEscapeUsed : false;
+    return { history, firstBlockedAt, emergencyEscapeUsed };
   } catch {
-    return { history: [] };
+    return { history: [], firstBlockedAt: null, emergencyEscapeUsed: false };
   }
 }
 
@@ -133,6 +160,90 @@ function blockCall(reason: string): void {
   process.exit(0);
 }
 
+export type HookAction = 'allow' | 'block' | 'escape';
+
+export interface HookDecision {
+  action: HookAction;
+  nextState: LoopDetectorState;
+  reason?: string;
+  alertMessage?: string;
+}
+
+/**
+ * Decide what to do with the next tool call.
+ *
+ * Pure: takes current state + the incoming call + a now timestamp, returns
+ * the next state and the action ('allow' | 'block' | 'escape'). Never reads
+ * stdin or fs and never exits the process — the actual hook entry-point
+ * orchestrates I/O around this function.
+ *
+ * State machine:
+ *   - allow → push call to history, reset firstBlockedAt and emergencyEscapeUsed.
+ *   - block → keep history unchanged, set firstBlockedAt if not already set.
+ *   - escape → keep history unchanged, set emergencyEscapeUsed. Granted exactly
+ *              once per blocked window after EMERGENCY_ESCAPE_MS elapsed since
+ *              firstBlockedAt. The next allowed call clears the window cleanly.
+ */
+export function decideHookAction(
+  state: LoopDetectorState,
+  toolName: string,
+  argsHash: string,
+  now: number,
+): HookDecision {
+  const recentHistory = state.history.filter(r => now - r.ts <= HISTORY_RETAIN_MS);
+  const newRecord: ToolCallRecord = { toolName, argsHash, ts: now };
+  const hypothetical = [...recentHistory, newRecord].slice(-HISTORY_SIZE);
+
+  const reps = countRepetitions(hypothetical, toolName, argsHash);
+  const pp = detectPingPong(hypothetical);
+  const wouldBlockReason: string | null =
+    reps >= REPETITION_BLOCK
+      ? `Tool loop detected: "${toolName}" called ${reps} times with identical arguments in the last ${HISTORY_SIZE} calls. Stop repeating this action and try a fundamentally different approach.`
+      : pp.count >= PINGPONG_BLOCK && pp.tools
+        ? `Tool loop detected: "${pp.tools[0]}" and "${pp.tools[1]}" are alternating repeatedly (${pp.count} alternations in the last ${hypothetical.length} calls). Stop this back-and-forth pattern and try a fundamentally different approach.`
+        : null;
+
+  if (wouldBlockReason === null) {
+    return {
+      action: 'allow',
+      nextState: {
+        history: hypothetical,
+        firstBlockedAt: null,
+        emergencyEscapeUsed: false,
+      },
+    };
+  }
+
+  const firstBlockedAt = state.firstBlockedAt ?? now;
+  const blockedDurationMs = now - firstBlockedAt;
+  const emergencyEscapeUsed = state.emergencyEscapeUsed === true;
+  const escapeAvailable =
+    blockedDurationMs >= EMERGENCY_ESCAPE_MS && !emergencyEscapeUsed;
+
+  if (escapeAvailable) {
+    const minutesBlocked = Math.floor(blockedDurationMs / 60000);
+    return {
+      action: 'escape',
+      nextState: {
+        history: recentHistory,
+        firstBlockedAt,
+        emergencyEscapeUsed: true,
+      },
+      alertMessage: `[hook-loop-detector] Emergency escape granted after ${minutesBlocked} min blocked. One tool call allowed; subsequent calls will block again until the workflow itself changes.`,
+    };
+  }
+
+  return {
+    action: 'block',
+    nextState: {
+      history: recentHistory,
+      firstBlockedAt,
+      emergencyEscapeUsed,
+    },
+    reason: wouldBlockReason,
+  };
+}
+
 async function main(): Promise<void> {
   const input = await readStdin();
   const { tool_name, tool_input } = parseHookInput(input);
@@ -143,26 +254,17 @@ async function main(): Promise<void> {
 
   const state = loadState(stateDir);
   const argsHash = hashArgs(tool_input);
-  state.history.push({ toolName: tool_name, argsHash, ts: Date.now() });
-  if (state.history.length > HISTORY_SIZE) {
-    state.history = state.history.slice(-HISTORY_SIZE);
-  }
-  saveState(stateDir, state);
+  const decision = decideHookAction(state, tool_name, argsHash, Date.now());
 
-  const reps = countRepetitions(state.history, tool_name, argsHash);
-  if (reps >= REPETITION_BLOCK) {
-    blockCall(
-      `Tool loop detected: "${tool_name}" called ${reps} times with identical arguments in the last ${HISTORY_SIZE} calls. Stop repeating this action and try a fundamentally different approach.`,
-    );
+  saveState(stateDir, decision.nextState);
+
+  if (decision.action === 'block' && decision.reason) {
+    blockCall(decision.reason);
     return;
   }
 
-  const pp = detectPingPong(state.history);
-  if (pp.count >= PINGPONG_BLOCK && pp.tools) {
-    blockCall(
-      `Tool loop detected: "${pp.tools[0]}" and "${pp.tools[1]}" are alternating repeatedly (${pp.count} alternations in the last ${state.history.length} calls). Stop this back-and-forth pattern and try a fundamentally different approach.`,
-    );
-    return;
+  if (decision.action === 'escape' && decision.alertMessage) {
+    process.stderr.write(decision.alertMessage + '\n');
   }
 
   process.exit(0);
