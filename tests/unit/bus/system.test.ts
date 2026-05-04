@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync, writeFileSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { execSync } from 'child_process';
+<<<<<<< HEAD
 import { selfRestart, autoCommit, autoCompactAgent, checkGoalStaleness, postActivity } from '../../../src/bus/system';
+=======
+import { selfRestart, hardRestart, autoCommit, checkGoalStaleness, postActivity } from '../../../src/bus/system';
+>>>>>>> upstream/main
 import type { BusPaths } from '../../../src/types';
 
 function makePaths(testDir: string, agent: string = 'test-agent'): BusPaths {
@@ -58,6 +62,25 @@ describe('Bus System', () => {
       const logPath = join(paths.logDir, 'restarts.log');
       const logContent = readFileSync(logPath, 'utf-8');
       expect(logContent).toContain('SELF-RESTART: no reason specified');
+    });
+  });
+
+  describe('hardRestart', () => {
+    it('creates .force-fresh and .restart-planned markers', () => {
+      const paths = makePaths(testDir);
+      hardRestart(paths, 'test-agent', 'context handoff');
+
+      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(true);
+      expect(existsSync(join(paths.stateDir, '.restart-planned'))).toBe(true);
+      const logContent = readFileSync(join(paths.logDir, 'restarts.log'), 'utf-8');
+      expect(logContent).toContain('HARD-RESTART: context handoff');
+    });
+
+    it('uses default reason when none provided', () => {
+      const paths = makePaths(testDir);
+      hardRestart(paths, 'test-agent');
+      const logContent = readFileSync(join(paths.logDir, 'restarts.log'), 'utf-8');
+      expect(logContent).toContain('HARD-RESTART: no reason specified');
     });
   });
 
