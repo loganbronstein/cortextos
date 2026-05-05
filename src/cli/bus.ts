@@ -475,6 +475,32 @@ function commandAvailable(command: string): boolean {
   return result.status === 0;
 }
 
+const GRAPHIFY_FILE_TYPES = new Set(['code', 'document', 'image', 'paper', 'rationale']);
+
+function normalizeGraphifyFileTypes(target: string): number {
+  const graphPath = join(target, 'graphify-out', 'graph.json');
+  if (!existsSync(graphPath)) return 0;
+
+  const graph = JSON.parse(readFileSync(graphPath, 'utf-8')) as {
+    nodes?: Array<Record<string, unknown>>;
+  };
+  let fixed = 0;
+
+  for (const node of graph.nodes || []) {
+    const fileType = node.file_type;
+    if (typeof fileType === 'string' && !GRAPHIFY_FILE_TYPES.has(fileType)) {
+      node.original_file_type = fileType;
+      node.file_type = 'document';
+      fixed += 1;
+    }
+  }
+
+  if (fixed > 0) {
+    writeFileSync(graphPath, `${JSON.stringify(graph, null, 2)}\n`, 'utf-8');
+  }
+  return fixed;
+}
+
 function runVaultScript(scriptPath: string, args: string[], vaultRoot: string): void {
   if (!existsSync(scriptPath)) {
     throw new Error(`Required vault script not found: ${scriptPath}`);
@@ -860,6 +886,10 @@ vaultCommand
       }
       if (!existsSync(join(target, 'graphify-out', 'graph.json'))) {
         throw new Error(`Graphify graph not found at ${join(target, 'graphify-out', 'graph.json')}. Run the Graphify skill first: $graphify ${target}`);
+      }
+      const normalized = normalizeGraphifyFileTypes(target);
+      if (normalized > 0) {
+        console.log(`Graphify: normalized ${normalized} invalid file_type value(s) before refresh.`);
       }
       if (opts.clusterOnly !== false) {
         execFileSync('graphify', ['cluster-only', '.'], {

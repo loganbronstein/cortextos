@@ -25,12 +25,15 @@ const RUN_SYNC_ALL = process.env.LAZY_SYNC_ALL === '1' || process.argv.includes(
 const SKIP_GRAPHIFY = process.env.LAZY_SKIP_GRAPHIFY === '1' || process.argv.includes('--skip-graphify');
 const SKIP_QMD = process.env.LAZY_SKIP_QMD === '1' || process.argv.includes('--skip-qmd');
 const SKIP_QMD_EMBED = process.env.LAZY_SKIP_QMD_EMBED === '1' || process.argv.includes('--skip-qmd-embed');
+const STEP_TIMEOUT_MS = Number.parseInt(process.env.LAZY_STEP_TIMEOUT_MS || '300000', 10);
+const PROGRESS_PATH = process.env.LAZY_PROGRESS_PATH || path.join(os.tmpdir(), `cortextos-lazy-obsidian-${TODAY}.log`);
 
 const PATH = [
   path.join(HOME, '.local', 'bin'),
   path.join(HOME, '.npm-global', 'bin'),
   process.env.PATH || '',
 ].join(':');
+const GRAPHIFY_FILE_TYPES = new Set(['code', 'document', 'image', 'paper', 'rationale']);
 
 function commandExists(command) {
   const result = spawnSync('bash', ['-lc', `command -v ${command}`], {
@@ -50,10 +53,16 @@ function cleanOutput(text) {
 
 function runStep(name, command, args, options = {}) {
   const started = Date.now();
+  const timeout = options.timeoutMs ?? STEP_TIMEOUT_MS;
+  const commandLine = [command, ...args].join(' ');
+  const progressLine = `[${new Date().toISOString()}] START ${name}: ${commandLine}\n`;
+  writeFileSync(PROGRESS_PATH, progressLine, { flag: 'a' });
+  console.log(`START ${name}`);
   const result = spawnSync(command, args, {
     cwd: options.cwd || CORTEX_ROOT,
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    timeout,
     env: {
       ...process.env,
       PATH,
@@ -63,12 +72,24 @@ function runStep(name, command, args, options = {}) {
     },
   });
   const output = cleanOutput(`${result.stdout || ''}${result.stderr || ''}`);
+  const timedOut = result.error?.code === 'ETIMEDOUT';
+  const status = timedOut ? 'TIMEOUT' : result.status === 0 ? 'PASS' : 'FAIL';
+  const exitCode = timedOut ? null : result.status;
+  const ms = Date.now() - started;
+  writeFileSync(
+    PROGRESS_PATH,
+    `[${new Date().toISOString()}] ${status} ${name} (${ms}ms)\n`,
+    { flag: 'a' },
+  );
+  console.log(`${status} ${name}`);
   return {
     name,
-    status: result.status === 0 ? 'PASS' : 'FAIL',
-    exitCode: result.status,
-    ms: Date.now() - started,
-    output: output.split('\n').slice(-12).join('\n'),
+    status,
+    exitCode,
+    ms,
+    output: timedOut
+      ? `timed out after ${timeout}ms\n${output}`.trim()
+      : output.split('\n').slice(-12).join('\n'),
   };
 }
 
@@ -132,6 +153,24 @@ function fileSummary(filePath) {
   }
 }
 
+function normalizeGraphifyFileTypes(target) {
+  const graphPath = path.join(target, 'graphify-out', 'graph.json');
+  if (!existsSync(graphPath)) return 0;
+
+  const graph = JSON.parse(readFileSync(graphPath, 'utf-8'));
+  let fixed = 0;
+  for (const node of graph.nodes || []) {
+    const fileType = node.file_type;
+    if (typeof fileType === 'string' && !GRAPHIFY_FILE_TYPES.has(fileType)) {
+      node.original_file_type = fileType;
+      node.file_type = 'document';
+      fixed += 1;
+    }
+  }
+  if (fixed > 0) writeFileSync(graphPath, `${JSON.stringify(graph, null, 2)}\n`, 'utf-8');
+  return fixed;
+}
+
 ensureParaFolders();
 
 const syncScript = path.join(SCRIPT_DIR, 'vault-sync-chat-transcripts.mjs');
@@ -164,6 +203,10 @@ if (SKIP_GRAPHIFY) {
 } else if (!existsSync(path.join(VAULT, 'graphify-out', 'graph.json'))) {
   steps.push({ name: 'Graphify: existing persistent Vault graph', status: 'FAIL', exitCode: 1, ms: 0, output: `missing ${path.join(VAULT, 'graphify-out', 'graph.json')}` });
 } else {
+  const normalized = normalizeGraphifyFileTypes(VAULT);
+  if (normalized > 0) {
+    steps.push({ name: 'Graphify: normalize persistent graph file types', status: 'PASS', exitCode: 0, ms: 0, output: `normalized ${normalized} invalid file_type value(s) to document` });
+  }
   steps.push(runStep('Graphify: refresh communities, god nodes, graph.json, graph.html, GRAPH_REPORT.md', 'graphify', ['cluster-only', '.'], { cwd: VAULT }));
 }
 
@@ -183,7 +226,7 @@ if (SKIP_QMD) {
 }
 
 const reportPath = path.join(OUT_DIR, `${TODAY}.md`);
-const failed = steps.filter((step) => step.status === 'FAIL');
+const failed = steps.filter((step) => step.status === 'FAIL' || step.status === 'TIMEOUT');
 const report = [
   '---',
   `date: ${TODAY}`,
@@ -212,6 +255,8 @@ const report = [
   '- Weekly vault: memory, dashboards, topic gaps -> weekly review, gaps list, next-step items.',
   '',
   '## This Run',
+  '',
+  `Progress log: \`${PROGRESS_PATH}\``,
   '',
   ...steps.flatMap((step) => [
     `- ${step.status} ${step.name} (${step.ms}ms)`,

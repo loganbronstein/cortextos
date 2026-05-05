@@ -63,6 +63,9 @@ describe('bus memory command contract', () => {
     expect(lazyScript).toContain("['update']");
     expect(lazyScript).toContain("['embed', '--max-docs-per-batch', '100', '--max-batch-mb', '20']");
     expect(lazyScript).toContain('QMD Vault context is configured');
+    expect(lazyScript).toContain('LAZY_STEP_TIMEOUT_MS');
+    expect(lazyScript).toContain('LAZY_PROGRESS_PATH');
+    expect(lazyScript).toContain('TIMEOUT');
   });
 
   it('keeps first-class Neon operational memory commands wired into cortextos bus', () => {

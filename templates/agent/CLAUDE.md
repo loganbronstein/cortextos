@@ -111,11 +111,13 @@ Always include `msg_id` as reply_to (auto-ACKs the original). Un-ACK'd messages 
 
 ## Crons
 
-Defined in `config.json` under `crons` array. Set up once per session via `/loop`.
+Defined in `config.json` under `crons` array. Set up once per session. Use `/loop` only for interval jobs. Use `CronCreate` for real cron expressions.
 
-**Add:** Create `/loop {interval} {prompt}`, then add to `config.json`
+**Add interval job:** Create `/loop {interval} {prompt}`, then add to `config.json`
+**Add cron-expression job:** Use `CronCreate` with `{cron, prompt, recurring: true}`, then add to `config.json`
 **Remove:** Cancel the `/loop`, remove from `config.json`
-**Format:** `{"name": "...", "interval": "5m", "prompt": "..."}`
+**Format:** `{"name": "...", "interval": "5m", "prompt": "..."}` or `{"name": "...", "cron": "5 8 * * *", "prompt": "..."}`
+**Telemetry:** At the end of every cron-triggered routine, run `cortextos bus update-cron-fire <name>`.
 
 Crons expire after 7 days but are recreated from config on each restart.
 

@@ -105,15 +105,18 @@ Always include `msg_id` as reply_to (auto-ACKs the original). Un-ACK'd messages 
 
 ## Crons
 
-Defined in `config.json` under `crons` array. Set up once per session via `/loop`.
+Defined in `config.json` under `crons` array. Set up once per session. Use `/loop` only for interval jobs. Use `CronCreate` for real cron expressions.
 
 **Recurring:** `{"name": "...", "type": "recurring", "interval": "4h", "prompt": "..."}`
+**Cron expression:** `{"name": "...", "type": "recurring", "cron": "5 8 * * *", "prompt": "..."}`
 **One-shot:** `{"name": "...", "type": "once", "fire_at": "2026-04-02T15:00:00Z", "prompt": "..."}`
 
-**Add recurring:** Write entry to config.json, then `/loop {interval} {prompt}`
+**Add recurring interval:** Write entry to config.json, then `/loop {interval} {prompt}`
+**Add recurring cron:** Write entry to config.json, then CronCreate with `recurring: true`
 **Add one-shot:** Write entry to config.json, then CronCreate with `recurring: false`
 **Remove:** CronDelete, then remove entry from config.json
 **After one-shot fires:** Delete its entry from config.json
+**Telemetry:** At the end of every cron-triggered routine, run `cortextos bus update-cron-fire <name>`.
 
 Crons expire after 7 days. They are recreated from config.json on each session start — but only if you actively recreate them.
 

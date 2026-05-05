@@ -251,6 +251,25 @@ describe('AgentProcess - BUG-011 fix (stop awaits PTY exit)', () => {
 });
 
 describe('AgentProcess - cron auto-verification', () => {
+  it('startup prompt restores cron expressions with CronCreate, not only /loop intervals', async () => {
+    const ap = new AgentProcess('alice', mockEnv, {
+      crons: [
+        { name: 'daily-memory', type: 'recurring' as const, cron: '5 8 * * *', prompt: 'write the daily memory report' },
+        { name: 'heartbeat', type: 'recurring' as const, interval: '4h', prompt: 'check in' },
+      ],
+    });
+
+    await ap.start();
+
+    const [mode, prompt] = mockPty.spawn.mock.calls[0];
+    expect(mode).toBe('fresh');
+    expect(prompt).toContain('For recurring entries with a "cron" field');
+    expect(prompt).toContain('CronCreate using the exact cron expression');
+    expect(prompt).toContain('For recurring entries with an "interval" field');
+    expect(prompt).toContain('/loop {interval} {prompt}');
+    expect(prompt).toContain('update-cron-fire <cron-name>');
+  });
+
   it('scheduleCronVerification() is a no-op when config has no crons', async () => {
     const ap = new AgentProcess('alice', mockEnv, {});
     await ap.start();
@@ -289,6 +308,26 @@ describe('AgentProcess - cron auto-verification', () => {
     ap.scheduleGapDetection();
     await new Promise(r => setTimeout(r, 100));
     expect(mockInjectMessage).not.toHaveBeenCalled();
+  });
+
+  it('scheduleGapDetection() watches cron-expression jobs, not just interval jobs', async () => {
+    vi.useFakeTimers();
+    try {
+      const ap = new AgentProcess('alice', mockEnv, {
+        crons: [{ name: 'hourly-sync', type: 'recurring' as const, cron: '7 * * * *', prompt: 'sync logs' }],
+      });
+      await ap.start();
+
+      ap.scheduleGapDetection();
+      await vi.advanceTimersByTimeAsync(131 * 60 * 1000);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(mockInjectMessage).toHaveBeenCalledOnce();
+    const promptArg: string = mockInjectMessage.mock.calls[0][1] as string;
+    expect(promptArg).toContain('hourly-sync');
+    expect(promptArg).toContain('CronCreate with cron "7 * * * *"');
   });
 
   it('scheduleCronVerification() schedules verification when config has recurring crons', async () => {

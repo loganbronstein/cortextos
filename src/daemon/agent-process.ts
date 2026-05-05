@@ -489,14 +489,27 @@ export class AgentProcess {
     const onlineMessage = isHandoffRestart || isSilentRestart
       ? ''
       : ' After setting up crons, send a Telegram message to the user saying you are back online.';
-    return `You are starting a new session. Current UTC time: ${nowUtc}. Read AGENTS.md and all bootstrap files listed there. Then restore your crons from config.json: for each entry with type "recurring" (or no type field), call /loop {interval} {prompt}; for each entry with type "once", compare fire_at against the current UTC time above — if fire_at is still in the future recreate the CronCreate, if fire_at is in the past delete that entry from config.json. CRITICAL DEDUP: Always call CronList BEFORE creating any cron. For each config.json entry, search the CronList output for its prompt text — if the prompt already appears, SKIP that cron entirely. Only call /loop or CronCreate for entries whose prompt text is NOT already listed. This prevents rapid --continue restarts from accumulating duplicate schedules.${reminderBlock}${deliverablesBlock}${handoffBlock}${handoffUxOverride}${silentUxOverride}${onlineMessage}${onboardingAppend}`;
+    return `You are starting a new session. Current UTC time: ${nowUtc}. Read AGENTS.md and all bootstrap files listed there. ${this.buildCronRestoreInstructions()}${reminderBlock}${deliverablesBlock}${handoffBlock}${handoffUxOverride}${silentUxOverride}${onlineMessage}${onboardingAppend}`;
   }
 
   private buildContinuePrompt(): string {
     const nowUtc = new Date().toISOString();
     const reminderBlock = this.buildReminderBlock();
     const deliverablesBlock = this.buildDeliverablesBlock();
-    return `SESSION CONTINUATION: Your CLI process was restarted with --continue to reload configs. Current UTC time: ${nowUtc}. Your full conversation history is preserved. Re-read AGENTS.md and ALL bootstrap files listed there. Restore your crons from config.json ONLY if missing. CRITICAL DEDUP: Call CronList FIRST. For each config.json entry, search the CronList output for its prompt text — if the prompt already appears, SKIP that cron. Only call /loop (recurring) or CronCreate (once, if fire_at is in the future) for entries whose prompt text is NOT already listed. Rapid --continue restarts must not accumulate duplicates.${reminderBlock}${deliverablesBlock} Check inbox. Resume normal operations. After restoring crons and checking inbox, send a Telegram message to the user saying you are back online.`;
+    return `SESSION CONTINUATION: Your CLI process was restarted with --continue to reload configs. Current UTC time: ${nowUtc}. Your full conversation history is preserved. Re-read AGENTS.md and ALL bootstrap files listed there. ${this.buildCronRestoreInstructions()}${reminderBlock}${deliverablesBlock} Check inbox. Resume normal operations. After restoring crons and checking inbox, send a Telegram message to the user saying you are back online.`;
+  }
+
+  private buildCronRestoreInstructions(): string {
+    return [
+      'Restore your crons from config.json ONLY if missing.',
+      'CRITICAL DEDUP: Always call CronList FIRST. For each config.json entry, search the CronList output for its prompt text. If the prompt already appears, SKIP that cron entirely.',
+      'For recurring entries with a "cron" field, recreate them with CronCreate using the exact cron expression, prompt text, and recurring=true.',
+      'For recurring entries with an "interval" field and no "cron" field, recreate them with /loop {interval} {prompt}.',
+      'For one-shot entries, compare fire_at against the current UTC time above. If fire_at is still in the future, recreate it with CronCreate. If fire_at is in the past, delete that entry from config.json.',
+      'If a recurring entry has neither cron nor interval, skip it and report the config error.',
+      'At the end of every cron-triggered routine, call cortextos bus update-cron-fire <cron-name> so daemon cron-state proves the job actually ran.',
+      'Only call /loop or CronCreate for entries whose prompt text is NOT already listed. This prevents rapid restarts from accumulating duplicate schedules.',
+    ].join(' ');
   }
 
   /**
@@ -748,10 +761,10 @@ export class AgentProcess {
     const crons = this.config.crons;
     if (!crons || crons.length === 0) return;
 
-    // Only monitor recurring crons with a parseable interval (skip cron expressions)
-    const monitorable = crons.filter(
-      c => c.type !== 'once' && c.type !== 'disabled' && c.interval && !isNaN(parseDurationMs(c.interval)),
-    );
+    const monitorable = crons
+      .filter(c => c.type !== 'once' && c.type !== 'disabled')
+      .map(c => ({ ...c, expectedMs: expectedCronCadenceMs(c.interval, c.cron) }))
+      .filter((c): c is typeof c & { expectedMs: number } => !isNaN(c.expectedMs));
     if (monitorable.length === 0) return;
 
     const generation = this.lifecycleGeneration;
@@ -763,7 +776,7 @@ export class AgentProcess {
   }
 
   private async runGapDetectionLoop(
-    crons: Array<{ name: string; interval?: string }>,
+    crons: Array<{ name: string; interval?: string; cron?: string; expectedMs: number }>,
     generation: number,
     loopStartedAt: number,
   ): Promise<void> {
@@ -782,8 +795,6 @@ export class AgentProcess {
       const state = readCronState(stateDir);
 
       for (const cronDef of crons) {
-        const intervalMs = parseDurationMs(cronDef.interval!);
-
         const record = state.crons.find(r => r.name === cronDef.name);
         let lastFireMs: number;
         if (!record) {
@@ -798,12 +809,15 @@ export class AgentProcess {
         }
 
         const gapMs = now - lastFireMs;
-        const threshold = intervalMs * GAP_MULTIPLIER;
+        const threshold = cronDef.expectedMs * GAP_MULTIPLIER;
 
         if (gapMs > threshold) {
           const gapMin = Math.round(gapMs / 60_000);
-          const expectedMin = Math.round(intervalMs / 60_000);
-          const nudge = `[SYSTEM] Cron gap detected for "${cronDef.name}": last fired ${gapMin} minutes ago (expected every ${expectedMin} minutes). Run CronList to verify the cron is still active. If missing, restore it from config.json: /loop ${cronDef.interval} <cron prompt>.`;
+          const expectedMin = Math.round(cronDef.expectedMs / 60_000);
+          const restoreHint = cronDef.cron
+            ? `CronCreate with cron "${cronDef.cron}" and the exact prompt from config.json`
+            : `/loop ${cronDef.interval} <cron prompt>`;
+          const nudge = `[SYSTEM] Cron gap detected for "${cronDef.name}": last fired ${gapMin} minutes ago (expected every ${expectedMin} minutes). Run CronList to verify the cron is still active. If missing, restore it from config.json using ${restoreHint}.`;
 
           this.log(`Gap nudge: ${cronDef.name} silent ${gapMin}min (threshold: ${Math.round(threshold / 60_000)}min)`);
           if (this.pty && this.status === 'running') {
@@ -890,4 +904,23 @@ export class AgentProcess {
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function expectedCronCadenceMs(interval?: string, cron?: string): number {
+  if (interval) return parseDurationMs(interval);
+  if (!cron) return NaN;
+
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return NaN;
+
+  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+  if (minute === '*' && hour === '*') return 60_000;
+  if (hour === '*') return 60 * 60_000;
+
+  const hasWeeklyConstraint = dayOfWeek !== '*';
+  const hasMonthlyConstraint = dayOfMonth !== '*' || month !== '*';
+  if (hasWeeklyConstraint) return 7 * 24 * 60 * 60_000;
+  if (hasMonthlyConstraint) return 31 * 24 * 60 * 60_000;
+
+  return 24 * 60 * 60_000;
 }
