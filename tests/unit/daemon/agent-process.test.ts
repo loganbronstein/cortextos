@@ -409,3 +409,33 @@ describe('AgentProcess - BUG-048 fix (session timer re-reads config)', () => {
     expect(refreshSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('AgentProcess - restart prompt ping silencing', () => {
+  it('--continue (SESSION CONTINUATION) prompt does NOT instruct a "back online" ping', () => {
+    const ap = new AgentProcess('alice', mockEnv, {});
+    const prompt = (ap as unknown as { buildContinuePrompt(): string }).buildContinuePrompt();
+    expect(prompt).not.toMatch(/saying you are back online/i);
+    expect(prompt).not.toMatch(/send a Telegram message to the user saying you are back online/i);
+  });
+
+  it('cold-boot prompt (no handoff, no silent-reset) STILL instructs a "back online" ping — hard-restart user-confirmation guard', () => {
+    fsMocks.existsSync.mockReturnValue(false);
+    const ap = new AgentProcess('alice', mockEnv, {});
+    const prompt = (ap as unknown as { buildStartupPrompt(): string }).buildStartupPrompt();
+    expect(prompt).toMatch(/send a Telegram message to the user saying you are back online/i);
+  });
+
+  it('SESSION CONTINUATION prompt preserves all required structural blocks', () => {
+    const ap = new AgentProcess('alice', mockEnv, {});
+    const prompt = (ap as unknown as { buildContinuePrompt(): string }).buildContinuePrompt();
+    expect(prompt).toMatch(/^SESSION CONTINUATION:/);
+    expect(prompt).toContain('--continue');
+    expect(prompt).toContain('Re-read AGENTS.md');
+    expect(prompt).toContain('Restore your crons from config.json ONLY if missing');
+    expect(prompt).toContain('CRITICAL DEDUP');
+    expect(prompt).toContain('CronList FIRST');
+    expect(prompt).toContain('Check inbox');
+    expect(prompt).toContain('Resume normal operations');
+    expect(prompt).toMatch(/Do NOT send a "back online" Telegram unless/i);
+  });
+});
