@@ -719,10 +719,11 @@ busCommand
 
 busCommand
   .command('hard-restart')
-  .description('Plan a hard restart (fresh session, no --continue)')
+  .description('Restart this agent fresh via daemon IPC (no --continue)')
   .option('--reason <why>', 'Reason for restart')
   .option('--handoff-doc <path>', 'Path to handoff document to inject into next session boot prompt')
-  .action((opts: { reason?: string; handoffDoc?: string }) => {
+  .option('--no-ipc', 'Arm markers only; skip the daemon IPC restart signal (markers consumed on the next restart triggered elsewhere)')
+  .action(async (opts: { reason?: string; handoffDoc?: string; ipc?: boolean }) => {
     const { writeFileSync: fsWrite, existsSync: fsExists, mkdirSync: fsMkdir } = require('fs');
     const env = resolveEnv();
     const paths = resolvePaths(env.agentName, env.instanceId, env.org);
@@ -731,7 +732,30 @@ busCommand
       fsMkdir(paths.stateDir, { recursive: true });
       fsWrite(join(paths.stateDir, '.handoff-doc-path'), opts.handoffDoc + '\n', 'utf-8');
     }
-    console.log('Hard restart planned');
+
+    // Issue #X: hard-restart from inside the agent's own CLI used to write
+    // markers and stop. The PID kept running with stale settings until
+    // something else triggered a restart. Now we signal the daemon to
+    // actually kill+respawn — same pattern as self-restart and
+    // auto-compact-agent. The .force-fresh marker tells the daemon to
+    // respawn without --continue. Pass --no-ipc to keep the legacy
+    // marker-only behavior (e.g. when planning a restart you want some
+    // other path to trigger).
+    if (opts.ipc !== false) {
+      const ipc = new IPCClient(env.instanceId);
+      if (await ipc.isDaemonRunning()) {
+        const resp = await ipc.send({ type: 'restart-agent', agent: env.agentName, source: 'cortextos bus hard-restart' });
+        if (resp.success) {
+          console.log(`Hard-restarting ${env.agentName} via daemon IPC`);
+          return;
+        }
+        console.error(`Daemon restart failed: ${resp.error}; markers armed but PID still running`);
+        process.exit(1);
+      }
+      console.error('ERROR: daemon not running — markers armed but PID still running. Start daemon with: cortextos start');
+      process.exit(1);
+    }
+    console.log('Hard restart planned (markers armed; --no-ipc, daemon not signaled)');
   });
 
 busCommand
