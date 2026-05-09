@@ -1,10 +1,11 @@
 import { readdirSync, readFileSync, existsSync, writeFileSync, unlinkSync, statSync } from 'fs';
-import { execFile, execFileSync, spawn } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import { hardRestart } from '../bus/system.js';
 import type { InboxMessage, BusPaths, TelegramMessage, TelegramCallbackQuery } from '../types/index.js';
 import { checkInbox, ackInbox } from '../bus/message.js';
+import { updateHeartbeat } from '../bus/heartbeat.js';
 import { updateApproval } from '../bus/approval.js';
 import { AgentProcess } from './agent-process.js';
 import type { TelegramAPI } from '../telegram/api.js';
@@ -108,14 +109,13 @@ export class FastChecker {
     await this.waitForBootstrap();
     this.log('Bootstrap complete. Beginning poll loop.');
 
-    // Idle-session heartbeat watchdog: fires every 50 min regardless of REPL state
+    // Idle-session heartbeat watchdog: record one pulse immediately after
+    // bootstrap, then every 50 min regardless of REPL state.
     const HEARTBEAT_INTERVAL_MS = 50 * 60 * 1000;
     const agentName = this.agent.name;
+    this.writeWatchdogHeartbeat(agentName, 'bootstrap complete');
     this.heartbeatTimer = setInterval(() => {
-      const ts = new Date().toISOString();
-      execFile('cortextos', ['bus', 'update-heartbeat', `[watchdog] ${agentName} alive — idle session ${ts}`], (err) => {
-        if (err) this.log(`Heartbeat watchdog error: ${err.message}`);
-      });
+      this.writeWatchdogHeartbeat(agentName, 'idle session');
     }, HEARTBEAT_INTERVAL_MS);
 
     while (this.running) {
@@ -142,6 +142,26 @@ export class FastChecker {
     if (this.heartbeatTimer !== null) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    }
+  }
+
+  private writeWatchdogHeartbeat(agentName: string, reason: string): void {
+    const ts = new Date().toISOString();
+    try {
+      let existing: { org?: string; display_name?: string; current_task?: string; loop_interval?: string } = {};
+      try {
+        existing = JSON.parse(readFileSync(join(this.paths.stateDir, 'heartbeat.json'), 'utf-8'));
+      } catch { /* no prior heartbeat to preserve */ }
+
+      updateHeartbeat(this.paths, agentName, `[watchdog] ${agentName} alive - ${reason} ${ts}`, {
+        org: existing.org,
+        displayName: existing.display_name,
+        currentTask: existing.current_task,
+        loopInterval: existing.loop_interval,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.log(`Heartbeat watchdog error: ${message}`);
     }
   }
 

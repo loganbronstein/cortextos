@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-vi.mock('child_process', () => ({ execFile: vi.fn() }));
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -766,48 +765,43 @@ describe('FastChecker', () => {
     beforeEach(() => { vi.useFakeTimers(); });
     afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
 
-    it('fires exec after bootstrap at 50-min interval', async () => {
-      const { execFile } = await import('child_process');
+    it('writes a watchdog heartbeat after bootstrap and at 50-min intervals', async () => {
       const agent = createMockAgent('my-agent');
       const checker = new FastChecker(agent, paths, '/tmp/framework');
       checker.start();
+      await vi.advanceTimersByTimeAsync(0);
+      const first = JSON.parse(readFileSync(join(paths.stateDir, 'heartbeat.json'), 'utf-8'));
+      expect(first.agent).toBe('my-agent');
+      expect(first.status).toContain('[watchdog] my-agent alive - bootstrap complete');
+
       await vi.advanceTimersByTimeAsync(50 * 60 * 1000);
-      expect(execFile).toHaveBeenCalledWith(
-        'cortextos',
-        expect.arrayContaining(['bus', 'update-heartbeat', expect.stringContaining('[watchdog] my-agent alive — idle session')]),
-        expect.any(Function),
-      );
+      const second = JSON.parse(readFileSync(join(paths.stateDir, 'heartbeat.json'), 'utf-8'));
+      expect(second.agent).toBe('my-agent');
+      expect(second.status).toContain('[watchdog] my-agent alive - idle session');
       checker.stop();
       checker.wake();
     });
 
-    it('clears timer on stop — no further exec calls after stop', async () => {
-      const { execFile } = await import('child_process');
-      const execMock = execFile as ReturnType<typeof vi.fn>;
+    it('clears timer on stop — no further heartbeat writes after stop', async () => {
       const agent = createMockAgent('my-agent');
       const checker = new FastChecker(agent, paths, '/tmp/framework');
       checker.start();
-      await vi.advanceTimersByTimeAsync(50 * 60 * 1000);
-      const callsBefore = execMock.mock.calls.length;
-      expect(callsBefore).toBeGreaterThan(0);
+      await vi.advanceTimersByTimeAsync(0);
+      const before = readFileSync(join(paths.stateDir, 'heartbeat.json'), 'utf-8');
       checker.stop();
       checker.wake();
       await vi.advanceTimersByTimeAsync(50 * 60 * 1000);
-      expect(execMock.mock.calls.length).toBe(callsBefore);
+      const after = readFileSync(join(paths.stateDir, 'heartbeat.json'), 'utf-8');
+      expect(after).toBe(before);
     });
 
     it('does not fire before bootstrap completes', async () => {
-      const { execFile } = await import('child_process');
       const agent = createMockAgent('my-agent');
       agent.isBootstrapped.mockReturnValue(false);
       const checker = new FastChecker(agent, paths, '/tmp/framework');
       checker.start();
       await vi.advanceTimersByTimeAsync(20 * 1000);
-      expect(execFile).not.toHaveBeenCalledWith(
-        'cortextos',
-        expect.arrayContaining([expect.stringContaining('[watchdog]')]),
-        expect.any(Function),
-      );
+      expect(existsSync(join(paths.stateDir, 'heartbeat.json'))).toBe(false);
       checker.stop();
       checker.wake();
     });
