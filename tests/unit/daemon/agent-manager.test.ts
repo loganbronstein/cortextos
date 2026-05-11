@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { buildReplyContext } from '../../../src/daemon/agent-manager.js';
+import { writeCrons } from '../../../src/bus/crons.js';
 
 // Mock the PTY layer so we don't load native bindings or spawn real processes.
 // AgentManager → AgentProcess → AgentPTY → node-pty. We mock at AgentProcess.
@@ -284,6 +285,87 @@ describe('AgentManager.restartAgent - BUG-007 fix (rebuild Telegram poller)', ()
 
     expect(stopSpy).not.toHaveBeenCalled();
     expect(startSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('AgentManager usage-tier cron throttling', () => {
+  let testDir: string;
+  let ctxRoot: string;
+  let frameworkRoot: string;
+  let prevCtxRoot: string | undefined;
+
+  beforeEach(() => {
+    testDir = mkdtempSync(join(tmpdir(), 'cortextos-am-usage-tier-'));
+    ctxRoot = join(testDir, 'instance');
+    frameworkRoot = join(testDir, 'framework');
+    mkdirSync(join(ctxRoot, 'state', 'alice'), { recursive: true });
+    mkdirSync(join(frameworkRoot, 'orgs', 'acme', 'agents', 'alice'), { recursive: true });
+    prevCtxRoot = process.env.CTX_ROOT;
+    process.env.CTX_ROOT = ctxRoot;
+  });
+
+  afterEach(() => {
+    if (prevCtxRoot === undefined) {
+      delete process.env.CTX_ROOT;
+    } else {
+      process.env.CTX_ROOT = prevCtxRoot;
+    }
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('reads persisted usage tiers and treats corrupt state as normal tier', () => {
+    const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
+
+    expect((am as any).readUsageTier('alice')).toBe(0);
+
+    writeFileSync(join(ctxRoot, 'state', 'alice', 'usage-tier.json'), JSON.stringify({ tier: 2 }));
+    expect((am as any).readUsageTier('alice')).toBe(2);
+
+    writeFileSync(join(ctxRoot, 'state', 'alice', 'usage-tier.json'), 'not json');
+    expect((am as any).readUsageTier('alice')).toBe(0);
+  });
+
+  it('only exempts heartbeat crons from usage-tier throttling', () => {
+    const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
+
+    expect((am as any).isUsageExemptCron({ name: 'heartbeat' })).toBe(true);
+    expect((am as any).isUsageExemptCron({ name: 'daily-research' })).toBe(false);
+  });
+
+  it('suppresses due non-heartbeat cron injection at tier 1 but still injects heartbeat', async () => {
+    const old = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    writeCrons('alice', [
+      {
+        name: 'heartbeat',
+        prompt: 'heartbeat prompt',
+        schedule: '1m',
+        enabled: true,
+        created_at: old,
+        last_fired_at: old,
+      },
+      {
+        name: 'daily-research',
+        prompt: 'do expensive work',
+        schedule: '1m',
+        enabled: true,
+        created_at: old,
+        last_fired_at: old,
+      },
+    ]);
+    writeFileSync(join(ctxRoot, 'state', 'alice', 'usage-tier.json'), JSON.stringify({ tier: 1 }));
+
+    const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
+    (am as any).agents.set('alice', { process: { config: {} }, checker: {} });
+    const injectSpy = vi.spyOn(am as any, 'injectAgent').mockReturnValue(true);
+
+    (am as any).startAgentCronScheduler('alice');
+    const scheduler = (am as any).cronSchedulers.get('alice');
+    await (scheduler as any).tick();
+    scheduler.stop();
+
+    expect(injectSpy).toHaveBeenCalledTimes(1);
+    expect(injectSpy.mock.calls[0][1]).toContain('heartbeat');
+    expect(injectSpy.mock.calls[0][1]).not.toContain('daily-research');
   });
 });
 

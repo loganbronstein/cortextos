@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('child_process', () => ({ execFile: vi.fn() }));
+import { execFile } from 'child_process';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -14,6 +15,10 @@ function createMockAgent(name = 'test-agent') {
     isBootstrapped: vi.fn().mockReturnValue(true),
     injectMessage: vi.fn().mockReturnValue(true),
     write: vi.fn(),
+    getAgentDir: vi.fn().mockReturnValue('/tmp/test-agent'),
+    getConfig: vi.fn().mockReturnValue({ ctx_warning_threshold: 70, ctx_handoff_threshold: 80 }),
+    getOutputBuffer: vi.fn().mockReturnValue({ getRecent: vi.fn().mockReturnValue('') }),
+    sessionRefresh: vi.fn().mockResolvedValue(undefined),
   } as any;
 }
 
@@ -316,6 +321,116 @@ describe('FastChecker', () => {
       const sendTyping = (checker as any).sendTyping.bind(checker);
       // Should not throw
       await expect(sendTyping(api, '12345')).resolves.toBeUndefined();
+    });
+  });
+
+  describe('usage tier guard', () => {
+    it('persists tier transitions and alerts agent + Telegram once', async () => {
+      const agent = createMockAgent();
+      const api = createMockTelegramApi();
+      const checker = new FastChecker(agent, paths, '/tmp/framework', {
+        telegramApi: api,
+        chatId: '12345',
+      });
+
+      vi.mocked(execFile).mockImplementationOnce(((_cmd: any, _args: any, cb: any) => {
+        cb(null, JSON.stringify({
+          five_hour_utilization: 0.86,
+          seven_day_utilization: 0.12,
+        }), '');
+        return {} as any;
+      }) as any);
+
+      (checker as any).usageLastCheckedAt = 0;
+      await (checker as any).checkUsageTier();
+
+      const usageTier = JSON.parse(readFileSync(join(paths.stateDir, 'usage-tier.json'), 'utf-8'));
+      expect(usageTier.tier).toBe(1);
+      expect(api.sendMessage).toHaveBeenCalledWith(
+        '12345',
+        expect.stringContaining('Tier 1 wind-down'),
+      );
+      const inboxFiles = (await import('fs')).readdirSync(join(paths.ctxRoot, 'inbox', 'test-agent'));
+      expect(inboxFiles.length).toBe(1);
+    });
+  });
+
+  describe('frozen session watchdog', () => {
+    it('hard-restarts when stdout contains the session exhaustion survey prompt', () => {
+      const agent = createMockAgent();
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+      writeFileSync(join(paths.logDir, 'stdout.log'), 'Some output\nHow is Claude doing this session?\n');
+
+      (checker as any).bootstrappedAt = Date.now() - 11 * 60 * 1000;
+      (checker as any).checkFrozenSession();
+
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(1);
+      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(true);
+    });
+
+    it('hard-restarts when stdout is frozen while the agent is active', () => {
+      const agent = createMockAgent();
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+      const stdoutPath = join(paths.logDir, 'stdout.log');
+      writeFileSync(stdoutPath, 'working...\n');
+      const size = readFileSync(stdoutPath).length;
+
+      (checker as any).bootstrappedAt = Date.now() - 11 * 60 * 1000;
+      (checker as any).lastMessageInjectedAt = Date.now() - 5 * 60 * 1000;
+      (checker as any).stdoutLastSize = size;
+      (checker as any).stdoutLastChangeAt = Date.now() - 31 * 60 * 1000;
+      (checker as any).checkFrozenSession();
+
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(1);
+      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(true);
+    });
+
+    it('does not depend on the 10 minute typing indicator for frozen-turn restarts', () => {
+      const agent = createMockAgent();
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+      const stdoutPath = join(paths.logDir, 'stdout.log');
+      writeFileSync(stdoutPath, 'working...\n');
+      const size = readFileSync(stdoutPath).length;
+
+      (checker as any).bootstrappedAt = Date.now() - 40 * 60 * 1000;
+      (checker as any).lastMessageInjectedAt = Date.now() - 31 * 60 * 1000;
+      (checker as any).stdoutLastSize = size;
+      (checker as any).stdoutLastChangeAt = Date.now() - 31 * 60 * 1000;
+      (checker as any).checkFrozenSession();
+
+      expect(agent.sessionRefresh).toHaveBeenCalledTimes(1);
+      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(true);
+    });
+  });
+
+  describe('context threshold compatibility', () => {
+    it('honors legacy ctx_autoreset_threshold as the handoff threshold', async () => {
+      const agentDir = join(testDir, 'agent-dir');
+      mkdirSync(agentDir, { recursive: true });
+      writeFileSync(
+        join(agentDir, 'config.json'),
+        JSON.stringify({ ctx_warning_threshold: 70, ctx_autoreset_threshold: 80 }),
+      );
+
+      const config: any = { ctx_warning_threshold: 70 };
+      const agent = createMockAgent();
+      agent.getAgentDir.mockReturnValue(agentDir);
+      agent.getConfig.mockReturnValue(config);
+      const checker = new FastChecker(agent, paths, '/tmp/framework');
+
+      writeFileSync(join(paths.stateDir, 'context_status.json'), JSON.stringify({
+        used_percentage: 85,
+        exceeds_200k_tokens: false,
+        session_id: 'legacy-alias-session',
+        written_at: new Date().toISOString(),
+      }));
+
+      await (checker as any).checkContextStatus();
+
+      expect(config.ctx_handoff_threshold).toBe(80);
+      expect(agent.injectMessage).toHaveBeenCalledWith(expect.stringContaining('[CONTEXT]'));
+      expect(agent.injectMessage).toHaveBeenCalledWith(expect.stringContaining('[CONTEXT HANDOFF REQUIRED]'));
+      expect(existsSync(join(paths.stateDir, '.force-fresh'))).toBe(true);
     });
   });
 

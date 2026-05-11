@@ -1472,13 +1472,34 @@ busCommand
       return map;
     }
 
-    // Merge in priority order: framework < template < agent (agent wins)
-    const merged = new Map<string, SkillInfo>();
-    for (const [k, v] of scanSkillsDir(join(frameworkRoot, '.claude', 'skills'), 'framework')) merged.set(k, v);
-    if (template) {
-      for (const [k, v] of scanSkillsDir(join(frameworkRoot, 'templates', template, '.claude', 'skills'), `template:${template}`)) merged.set(k, v);
+    function mergeSkillDirs(dirs: Array<{ dir: string; source: string }>) {
+      for (const { dir, source } of dirs) {
+        for (const [k, v] of scanSkillsDir(dir, source)) merged.set(k, v);
+      }
     }
-    for (const [k, v] of scanSkillsDir(join(agentDir, '.claude', 'skills'), 'agent')) merged.set(k, v);
+
+    // Merge in priority order: framework < template < agent (agent wins).
+    // Claude-Code agents use .claude/skills. Codex app-server agents use
+    // plugins/cortextos-agent-skills/skills. Support both so discovery matches
+    // the bootstrap docs for each runtime.
+    const merged = new Map<string, SkillInfo>();
+    mergeSkillDirs([
+      { dir: join(frameworkRoot, '.claude', 'skills'), source: 'framework' },
+      { dir: join(frameworkRoot, 'plugins', 'cortextos-agent-skills', 'skills'), source: 'framework:codex-plugin' },
+      { dir: join(frameworkRoot, 'skills'), source: 'framework' },
+    ]);
+    if (template) {
+      mergeSkillDirs([
+        { dir: join(frameworkRoot, 'templates', template, '.claude', 'skills'), source: `template:${template}` },
+        { dir: join(frameworkRoot, 'templates', template, 'plugins', 'cortextos-agent-skills', 'skills'), source: `template:${template}:codex-plugin` },
+        { dir: join(frameworkRoot, 'templates', template, 'skills'), source: `template:${template}` },
+      ]);
+    }
+    mergeSkillDirs([
+      { dir: join(agentDir, '.claude', 'skills'), source: 'agent' },
+      { dir: join(agentDir, 'plugins', 'cortextos-agent-skills', 'skills'), source: 'agent:codex-plugin' },
+      { dir: join(agentDir, 'skills'), source: 'agent' },
+    ]);
 
     const skills = Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name));
 
@@ -2214,6 +2235,7 @@ busCommand
             `Migrated ${agentArg}: ${result.cronsMigrated} cron(s) migrated` +
             (result.cronsSkipped?.length ? `, ${result.cronsSkipped.length} skipped (${result.cronsSkipped.join(', ')})` : '')
           );
+          await signalCronReload(agentArg, env.instanceId);
           break;
       }
     } else {
@@ -2231,6 +2253,12 @@ busCommand
       console.log(`  Already migrated    : ${skippedAlready}`);
       console.log(`  No config.json      : ${noConfig}`);
       console.log(`  No crons in config  : ${noCrons}`);
+
+      await Promise.all(
+        summary.results
+          .filter(r => r.status === 'migrated')
+          .map(r => signalCronReload(r.agentName, env.instanceId)),
+      );
     }
   });
 
@@ -2410,20 +2438,43 @@ busCommand
   .option('--account <name>', 'Check specific account (default: active account)')
   .option('--force', 'Bypass cache and fetch fresh data')
   .option('--json', 'Output as JSON')
-  .action(async (opts: { account?: string; force?: boolean; json?: boolean }) => {
+  .option('--warn-7day <pct>', '7-day warning threshold as percent or ratio')
+  .option('--warn-5h <pct>', '5-hour warning threshold as percent or ratio')
+  .option('--chat-id <id>', 'Telegram chat ID for warning alerts')
+  .action(async (opts: { account?: string; force?: boolean; json?: boolean; warn7day?: string; warn5h?: string; chatId?: string }) => {
     const env = resolveEnv();
+    const normalizeThreshold = (raw: string | undefined, fallback: number): number => {
+      if (raw === undefined) return fallback;
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed)) return fallback;
+      return parsed > 1 ? parsed / 100 : parsed;
+    };
     try {
       const result = await checkUsageApi(env.ctxRoot, { force: opts.force, account: opts.account });
+      const warn7dThreshold = normalizeThreshold(opts.warn7day, ALERT_7D);
+      const warn5hThreshold = normalizeThreshold(opts.warn5h, ALERT_5H);
+      const warn5h = result.five_hour_utilization >= warn5hThreshold;
+      const warn7d = result.seven_day_utilization >= warn7dThreshold;
       if (opts.json) {
         console.log(JSON.stringify(result, null, 2));
       } else {
         const cached = result.cached ? ' (cached)' : '';
-        const warn5h = result.five_hour_utilization >= ALERT_5H ? ' ⚠️' : '';
-        const warn7d = result.seven_day_utilization >= ALERT_7D ? ' ⚠️' : '';
+        const warn5hMarker = warn5h ? ' ⚠️' : '';
+        const warn7dMarker = warn7d ? ' ⚠️' : '';
         console.log(`Account: ${result.account}${cached}`);
-        console.log(`5h utilization:  ${pct(result.five_hour_utilization)}${warn5h}`);
-        console.log(`7d utilization:  ${pct(result.seven_day_utilization)}${warn7d}`);
+        console.log(`5h utilization:  ${pct(result.five_hour_utilization)}${warn5hMarker}`);
+        console.log(`7d utilization:  ${pct(result.seven_day_utilization)}${warn7dMarker}`);
         console.log(`Fetched at: ${result.fetched_at}`);
+      }
+      if (opts.chatId && (warn5h || warn7d)) {
+        const botToken = process.env.BOT_TOKEN;
+        if (botToken) {
+          const telegram = new TelegramAPI(botToken);
+          await telegram.sendMessage(
+            opts.chatId,
+            `Claude usage warning. 5h ${pct(result.five_hour_utilization)}, 7d ${pct(result.seven_day_utilization)}.`,
+          );
+        }
       }
     } catch (err) {
       console.error(`Error: ${err}`);
