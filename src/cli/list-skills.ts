@@ -82,13 +82,24 @@ export const listSkillsCommand = new Command('list-skills')
     // Find framework template dir
     const templateRoot = findTemplateRoot();
 
-    // Scan in priority order (framework → template → agent)
+    const mergeSkillDirs = (dirs: Array<{ dir: string; source: string }>) => {
+      for (const { dir, source } of dirs) {
+        for (const skill of scanSkillsDir(dir, source)) {
+          skillMap.set(skill.name, skill);
+        }
+      }
+    };
+
+    // Scan in priority order (framework → template → agent). Claude-Code agents
+    // use .claude/skills. Codex app-server agents use
+    // plugins/cortextos-agent-skills/skills. Support both discovery roots.
     // Framework-level skills
     if (templateRoot) {
-      const frameworkSkills = join(templateRoot, '..', 'skills');
-      for (const skill of scanSkillsDir(frameworkSkills, 'framework')) {
-        skillMap.set(skill.name, skill);
-      }
+      mergeSkillDirs([
+        { dir: join(templateRoot, '..', '.claude', 'skills'), source: 'framework' },
+        { dir: join(templateRoot, '..', 'plugins', 'cortextos-agent-skills', 'skills'), source: 'framework:codex-plugin' },
+        { dir: join(templateRoot, '..', 'skills'), source: 'framework' },
+      ]);
     }
 
     // Template-level skills (detect role from config.json)
@@ -99,10 +110,11 @@ export const listSkillsCommand = new Command('list-skills')
           const config = JSON.parse(readFileSync(configPath, 'utf-8'));
           const role = config.template || '';
           if (role) {
-            const roleSkillsDir = join(templateRoot, role, 'skills');
-            for (const skill of scanSkillsDir(roleSkillsDir, `template:${role}`)) {
-              skillMap.set(skill.name, skill);
-            }
+            mergeSkillDirs([
+              { dir: join(templateRoot, role, '.claude', 'skills'), source: `template:${role}` },
+              { dir: join(templateRoot, role, 'plugins', 'cortextos-agent-skills', 'skills'), source: `template:${role}:codex-plugin` },
+              { dir: join(templateRoot, role, 'skills'), source: `template:${role}` },
+            ]);
           }
         }
       } catch {
@@ -111,10 +123,11 @@ export const listSkillsCommand = new Command('list-skills')
     }
 
     // Agent-level skills (highest priority, override others)
-    const agentSkills = join(agentDir, 'skills');
-    for (const skill of scanSkillsDir(agentSkills, 'agent')) {
-      skillMap.set(skill.name, skill);
-    }
+    mergeSkillDirs([
+      { dir: join(agentDir, '.claude', 'skills'), source: 'agent' },
+      { dir: join(agentDir, 'plugins', 'cortextos-agent-skills', 'skills'), source: 'agent:codex-plugin' },
+      { dir: join(agentDir, 'skills'), source: 'agent' },
+    ]);
 
     const skills = Array.from(skillMap.values()).sort((a, b) => a.name.localeCompare(b.name));
 

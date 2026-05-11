@@ -850,6 +850,11 @@ export class AgentManager {
 
     const onFire = async (cron: CronDefinition): Promise<void> => {
       const prompt = cron.prompt ?? `[cron] ${cron.name} fired`;
+      const usageTier = this.readUsageTier(agentName);
+      if (usageTier > 0 && !this.isUsageExemptCron(cron)) {
+        console.log(`[daemon] Skipping cron "${cron.name}" for agent "${agentName}" due to usage tier ${usageTier}`);
+        return;
+      }
       // Salt with the fire timestamp so MessageDedup (which hashes the last 100
       // injects) does not reject identical cron prompts on subsequent fires.
       // Without the salt, every recurring cron after its first fire would be
@@ -953,6 +958,25 @@ export class AgentManager {
       // Ignore parse errors
     }
     return {}; // Default config
+  }
+
+  /**
+   * Read the usage tier persisted by FastChecker. Tier 0 is normal. Tiers 1+
+   * suspend proactive cron work while preserving heartbeat visibility.
+   */
+  private readUsageTier(agentName: string): 0 | 1 | 2 {
+    try {
+      const tierPath = join(this.ctxRoot, 'state', agentName, 'usage-tier.json');
+      if (!existsSync(tierPath)) return 0;
+      const data = JSON.parse(readFileSync(tierPath, 'utf-8'));
+      return data.tier === 1 || data.tier === 2 ? data.tier : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private isUsageExemptCron(cron: CronDefinition): boolean {
+    return /heartbeat/i.test(cron.name);
   }
 }
 

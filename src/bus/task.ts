@@ -39,7 +39,7 @@ export function createTask(
   validatePriority(priority);
 
   const epoch = Date.now();
-  const rand = randomDigits(3);
+  const rand = randomDigits(6);
   const taskId = `task_${epoch}_${rand}`;
   const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
 
@@ -204,7 +204,7 @@ export function checkTaskDependencies(
  *      matching task file. Only runs when the fast path missed, so
  *      same-org operations take no perf hit.
  *
- * Task IDs are generated as `task_<epoch_ms>_<3digit_random>` so real
+ * Task IDs are generated as `task_<epoch_ms>_<6digit_random>` so real
  * collisions are effectively impossible — but if the scan ever finds the
  * same ID in multiple orgs (e.g. due to a bug in ID generation or a manual
  * file copy), we warn loudly naming the task ID, the match count, AND the

@@ -1,10 +1,10 @@
-import { readdirSync, readFileSync, existsSync, writeFileSync, unlinkSync, statSync } from 'fs';
+import { readdirSync, readFileSync, existsSync, writeFileSync, unlinkSync, statSync, openSync, readSync, closeSync } from 'fs';
 import { execFile } from 'child_process';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import { hardRestart } from '../bus/system.js';
 import type { InboxMessage, BusPaths, TelegramMessage, TelegramCallbackQuery } from '../types/index.js';
-import { checkInbox, ackInbox } from '../bus/message.js';
+import { checkInbox, ackInbox, sendMessage } from '../bus/message.js';
 import { updateApproval } from '../bus/approval.js';
 import { AgentProcess } from './agent-process.js';
 import type { TelegramAPI } from '../telegram/api.js';
@@ -48,6 +48,22 @@ export class FastChecker {
   // Idle-session heartbeat watchdog
   private heartbeatTimer: NodeJS.Timeout | null = null;
 
+  // Frozen-session watchdog state
+  private bootstrappedAt: number = 0;
+  private frozenLastRestartAt: number = 0;
+  private stdoutLastSize: number = 0;
+  private stdoutLastChangeAt: number = 0;
+  private frozenWatchdogTriggered: boolean = false;
+  private readonly BOOTSTRAP_GRACE_MS = 10 * 60 * 1000;
+  private readonly FROZEN_RESTART_COOLDOWN_MS = 15 * 60 * 1000;
+  private readonly STDOUT_FROZEN_MS = 30 * 60 * 1000;
+
+  // Usage rate-limit guard state
+  private usageLastCheckedAt: number = 0;
+  private usageTier: 0 | 1 | 2 = 0; // 0=normal, 1=wind-down, 2=critical/minimal
+  private usageTierFile: string = '';
+  private readonly USAGE_CHECK_INTERVAL_MS = 15 * 60 * 1000;
+
   // Context monitor state
   private ctxConfigMtime: number = 0;
   private ctxWarningFiredAt: number = 0;    // dedup: 15min cooldown between warnings
@@ -81,6 +97,11 @@ export class FastChecker {
     // Load persisted circuit breaker state so --continue restarts don't reset it
     this.ctxCircuitFile = join(paths.stateDir, '.ctx-circuit.json');
     this.loadCtxCircuit();
+
+    // Load persisted usage tier state so transitions stay quiet across restarts
+    this.usageTierFile = join(paths.stateDir, 'usage-tier.json');
+    this.loadUsageTier();
+    this.usageLastCheckedAt = Date.now() - Math.floor(Math.random() * this.USAGE_CHECK_INTERVAL_MS);
   }
 
   /**
@@ -105,6 +126,8 @@ export class FastChecker {
     // Wait for bootstrap
     await this.waitForBootstrap();
     this.log('Bootstrap complete. Beginning poll loop.');
+    this.bootstrappedAt = Date.now();
+    this.stdoutLastChangeAt = Date.now();
 
     // Idle-session heartbeat watchdog: fires every 50 min regardless of REPL state
     const HEARTBEAT_INTERVAL_MS = 50 * 60 * 1000;
@@ -209,8 +232,14 @@ export class FastChecker {
       await this.sendTyping(this.telegramApi, this.chatId);
     }
 
+    // Usage guard: throttles proactive work when Claude usage approaches limits.
+    await this.checkUsageTier();
+
     // Context monitor: check usage thresholds and fire warnings/handoffs
     await this.checkContextStatus();
+
+    // Frozen-session watchdog: catches context exhaustion screens and active stalls.
+    this.checkFrozenSession();
   }
 
   /**
@@ -883,7 +912,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
         const cfg = JSON.parse(readFileSync(configPath, 'utf-8'));
         const config = this.agent.getConfig();
         config.ctx_warning_threshold = cfg.ctx_warning_threshold;
-        config.ctx_handoff_threshold = cfg.ctx_handoff_threshold;
+        config.ctx_handoff_threshold = cfg.ctx_handoff_threshold ?? cfg.ctx_autoreset_threshold;
         this.ctxConfigMtime = mtime;
       }
     } catch { /* keep stale values */ }
@@ -953,7 +982,9 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
 
     const { warn, handoff } = this.getCtxThresholds();
 
-    // No threshold configured — observe-only mode (log but don't act)
+    // No threshold configured — observe-only mode (log but don't act).
+    // Older agent configs used ctx_autoreset_threshold; getCtxThresholds()
+    // normalizes that alias into ctx_handoff_threshold before this guard.
     if (this.agent.getConfig().ctx_handoff_threshold === undefined) return;
 
     const effectivePct = pct ?? (exceeds200k ? 101 : null);
@@ -1061,6 +1092,207 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     // sessionRefresh() does stop() + start(); shouldContinue() will return false
     // because .force-fresh was just written, giving us a clean fresh session.
     this.agent.sessionRefresh().catch(err => this.log(`Context restart failed: ${err}`));
+  }
+
+  /**
+   * Detect hard-stuck sessions that context_status.json alone cannot catch.
+   *
+   * Two signals:
+   * - Claude Code's session survey prompt, which commonly appears after context
+   *   exhaustion or terminal-level failure.
+   * - stdout unchanged for 30+ min while this checker still believes the agent
+   *   is actively handling a user turn.
+   */
+  private checkFrozenSession(): void {
+    const now = Date.now();
+    if (this.frozenWatchdogTriggered) return;
+    if (this.bootstrappedAt === 0 || now - this.bootstrappedAt < this.BOOTSTRAP_GRACE_MS) return;
+    if (this.frozenLastRestartAt > 0 && now - this.frozenLastRestartAt < this.FROZEN_RESTART_COOLDOWN_MS) return;
+
+    const stdoutPath = join(this.paths.logDir, 'stdout.log');
+    if (!existsSync(stdoutPath)) return;
+
+    let size: number;
+    try {
+      size = statSync(stdoutPath).size;
+    } catch {
+      return;
+    }
+
+    if (size !== this.stdoutLastSize) {
+      this.stdoutLastSize = size;
+      this.stdoutLastChangeAt = now;
+    }
+
+    const tail = this.readStdoutTail(stdoutPath, size, 20_000);
+    if (tail && /How is Claude doing this session\?|conversation too long|extra usage.*1[Mm] context/i.test(tail)) {
+      this.log('Frozen watchdog: context/session exhaustion prompt detected — hard-restarting');
+      this.triggerFrozenRestart('context/session exhaustion prompt in stdout');
+      return;
+    }
+
+    if (
+      this.lastMessageInjectedAt > 0 &&
+      now - this.stdoutLastChangeAt > this.STDOUT_FROZEN_MS &&
+      this.hasUnfinishedInjectedTurn()
+    ) {
+      const stalledSec = Math.round((now - this.stdoutLastChangeAt) / 1000);
+      this.log(`Frozen watchdog: stdout unchanged for ${stalledSec}s while active — hard-restarting`);
+      this.triggerFrozenRestart(`stdout unchanged ${stalledSec}s while active`);
+    }
+  }
+
+  private readStdoutTail(filePath: string, size: number, maxBytes: number): string {
+    try {
+      const tailBytes = Math.min(maxBytes, size);
+      if (tailBytes <= 0) return '';
+      const fd = openSync(filePath, 'r');
+      try {
+        const buf = Buffer.alloc(tailBytes);
+        readSync(fd, buf, 0, tailBytes, size - tailBytes);
+        return buf.toString('utf-8');
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      return '';
+    }
+  }
+
+  private triggerFrozenRestart(reason: string): void {
+    this.frozenWatchdogTriggered = true;
+    this.frozenLastRestartAt = Date.now();
+    this.forceContextRestart(`FROZEN-SESSION: ${reason}`);
+  }
+
+  private hasUnfinishedInjectedTurn(): boolean {
+    if (this.lastMessageInjectedAt === 0) return false;
+
+    const outboundPath = join(this.paths.logDir, 'outbound-messages.jsonl');
+    try {
+      if (existsSync(outboundPath)) {
+        const { size } = statSync(outboundPath);
+        if (this.outboundLogSize === 0) {
+          this.outboundLogSize = size;
+        } else if (size > this.outboundLogSize) {
+          this.outboundLogSize = size;
+          this.lastMessageInjectedAt = 0;
+          return false;
+        }
+      }
+    } catch { /* non-critical */ }
+
+    const flagPath = join(this.paths.stateDir, 'last_idle.flag');
+    try {
+      if (!existsSync(flagPath)) return true;
+      const idleTs = parseInt(readFileSync(flagPath, 'utf-8').trim(), 10) * 1000;
+      return this.lastMessageInjectedAt > idleTs;
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * Check Claude usage and announce tier transitions.
+   *
+   * This guard is intentionally transition-only. It does not spam every poll
+   * cycle, and it uses high warn thresholds for check-usage-api so this daemon
+   * owns the policy messaging.
+   */
+  private async checkUsageTier(): Promise<void> {
+    const now = Date.now();
+    if (now - this.usageLastCheckedAt < this.USAGE_CHECK_INTERVAL_MS) return;
+    this.usageLastCheckedAt = now;
+
+    let rawJson = '';
+    try {
+      rawJson = await new Promise<string>((resolve, reject) => {
+        execFile('cortextos', ['bus', 'check-usage-api', '--json'], (err, stdout) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve(stdout);
+        });
+      });
+    } catch (err) {
+      this.log(`Usage check failed: ${err}`);
+      return;
+    }
+
+    let utilization = -1;
+    try {
+      const data = JSON.parse(rawJson);
+      const normalize = (value: unknown): number => {
+        if (typeof value !== 'number') return -1;
+        return value > 1 ? value / 100 : value;
+      };
+      const fiveHour = Math.max(
+        normalize(data?.five_hour_utilization),
+        normalize(data?.fiveHourUtilization),
+        normalize(data?.five_hour?.utilization),
+      );
+      const sevenDay = Math.max(
+        normalize(data?.seven_day_utilization),
+        normalize(data?.sevenDayUtilization),
+        normalize(data?.seven_day?.utilization),
+      );
+      utilization = Math.max(fiveHour, sevenDay);
+    } catch {
+      this.log('Usage check: could not parse check-usage-api response');
+      return;
+    }
+
+    if (utilization < 0) return;
+
+    const newTier: 0 | 1 | 2 = utilization >= 0.95 ? 2 : utilization >= 0.85 ? 1 : 0;
+    const prevTier = this.usageTier;
+    if (newTier === prevTier) return;
+
+    this.usageTier = newTier;
+    this.saveUsageTier();
+
+    const pct = Math.round(utilization * 100);
+    const msg = newTier === 0
+      ? `Rate limit recovered. Utilization at ${pct}%. Resuming normal operations.`
+      : newTier === 1
+        ? `Rate limit at ${pct}%. Tier 1 wind-down: finish current task, no new autonomous work.`
+        : `Rate limit at ${pct}%. Critical threshold reached. Direct-message-only mode until reset.`;
+
+    this.log(`Usage tier transition: ${prevTier} -> ${newTier} (${pct}%)`);
+
+    if (this.telegramApi && this.chatId) {
+      this.telegramApi.sendMessage(this.chatId, msg).catch(() => { /* non-critical */ });
+    }
+
+    try {
+      sendMessage(this.paths, 'fast-checker', this.agent.name, 'urgent', msg);
+    } catch (err) {
+      this.log(`Usage tier inbox write failed: ${err}`);
+    }
+  }
+
+  private loadUsageTier(): void {
+    try {
+      if (!existsSync(this.usageTierFile)) return;
+      const data = JSON.parse(readFileSync(this.usageTierFile, 'utf-8'));
+      if (data.tier === 0 || data.tier === 1 || data.tier === 2) {
+        this.usageTier = data.tier;
+      }
+    } catch {
+      this.usageTier = 0;
+    }
+  }
+
+  private saveUsageTier(): void {
+    try {
+      writeFileSync(this.usageTierFile, JSON.stringify({
+        tier: this.usageTier,
+        checkedAt: Date.now(),
+      }) + '\n', 'utf-8');
+    } catch {
+      // Non-critical
+    }
   }
 
   /**
@@ -1174,7 +1406,7 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     const outboundPath = join(this.paths.logDir, 'outbound-messages.jsonl');
     try {
       if (existsSync(outboundPath)) {
-        const { size } = require('fs').statSync(outboundPath);
+        const { size } = statSync(outboundPath);
         if (this.outboundLogSize === 0) {
           // First check: seed baseline, don't trigger yet
           this.outboundLogSize = size;
