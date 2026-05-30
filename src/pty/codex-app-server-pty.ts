@@ -780,9 +780,10 @@ export class CodexAppServerPTY {
    * monitor. Writes atomically; failures are non-fatal (observability only).
    *
    * Mapping (per codex schema ThreadTokenUsageUpdatedNotification):
-   *   - used_percentage = last.totalTokens / cap * 100  (clamped to [0, 100])
+   *   - used_percentage = (last.totalTokens - last.cachedInputTokens) / cap * 100
+   *     (clamped to [0, 100])
    *   - context_window_size = modelContextWindow ?? config.codex_context_cap ?? 256000
-   *   - exceeds_200k_tokens = last.totalTokens > 200000
+   *   - exceeds_200k_tokens = (last.totalTokens - last.cachedInputTokens) > 200000
    *   - current_usage.{input,output,cache_read} from last.{input,output,cachedInput}Tokens
    *   - session_id = current threadId
    */
@@ -793,18 +794,22 @@ export class CodexAppServerPTY {
     const last = isRecord(tokenUsage.last) ? tokenUsage.last : null;
     const contextUsage = last ?? total;
     if (!contextUsage) return;
-    const contextTokens = typeof contextUsage.totalTokens === 'number' ? contextUsage.totalTokens : null;
-    if (contextTokens === null) return;
+    const totalTokens = typeof contextUsage.totalTokens === 'number' ? contextUsage.totalTokens : null;
+    if (totalTokens === null) return;
 
     const modelContextWindow = typeof tokenUsage.modelContextWindow === 'number'
       ? tokenUsage.modelContextWindow
       : null;
     const cap = modelContextWindow ?? this._config.codex_context_cap ?? 256000;
-    const usedPct = cap > 0 ? Math.min(100, (contextTokens / cap) * 100) : null;
 
     const inputTokens = typeof contextUsage.inputTokens === 'number' ? contextUsage.inputTokens : 0;
     const outputTokens = typeof contextUsage.outputTokens === 'number' ? contextUsage.outputTokens : 0;
     const cachedInputTokens = typeof contextUsage.cachedInputTokens === 'number' ? contextUsage.cachedInputTokens : 0;
+    // Codex app-server token usage is billing-style and accumulates cached
+    // reads inside a multi-tool turn. Cached reads can exceed the model context
+    // cap, so raw totalTokens is not directly comparable to modelContextWindow.
+    const contextTokens = Math.max(0, totalTokens - cachedInputTokens);
+    const usedPct = cap > 0 ? Math.min(100, (contextTokens / cap) * 100) : null;
 
     const payload = JSON.stringify({
       used_percentage: usedPct,

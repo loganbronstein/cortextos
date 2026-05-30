@@ -957,7 +957,7 @@ describe('CodexAppServerPTY thread/tokenUsage/updated → context_status.json', 
     });
   });
 
-  it('uses last usage for context percentage instead of cumulative session total', () => {
+  it('uses last non-cached usage for context percentage instead of cumulative billing total', () => {
     const pty = new CodexAppServerPTY(mockEnv, {});
     (pty as unknown as { _threadId: string })._threadId = 'thread-9';
     feedTokenUsage(pty, {
@@ -967,7 +967,34 @@ describe('CodexAppServerPTY thread/tokenUsage/updated → context_status.json', 
     });
 
     const payload = lastWrittenPayload()!;
-    expect(payload.used_percentage).toBeCloseTo((105000 / 258400) * 100, 5);
+    expect(payload.used_percentage).toBeCloseTo((15000 / 258400) * 100, 5);
+    expect(payload.exceeds_200k_tokens).toBe(false);
+  });
+
+  it('does not report 100 percent for repeated cached reads inside one Codex turn', () => {
+    const pty = new CodexAppServerPTY(mockEnv, {});
+    (pty as unknown as { _threadId: string })._threadId = 'thread-9';
+    feedTokenUsage(pty, {
+      last: {
+        cachedInputTokens: 764672,
+        inputTokens: 874932,
+        outputTokens: 7031,
+        reasoningOutputTokens: 0,
+        totalTokens: 881963,
+      },
+      total: {
+        cachedInputTokens: 764672,
+        inputTokens: 874932,
+        outputTokens: 7031,
+        reasoningOutputTokens: 0,
+        totalTokens: 881963,
+      },
+      modelContextWindow: 258400,
+    });
+
+    const payload = lastWrittenPayload()!;
+    expect(payload.used_percentage).toBeCloseTo(((881963 - 764672) / 258400) * 100, 5);
+    expect(payload.used_percentage).toBeLessThan(50);
     expect(payload.exceeds_200k_tokens).toBe(false);
   });
 
