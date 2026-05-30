@@ -1525,8 +1525,10 @@ busCommand
     for (const [k, v] of scanSkillsDir(join(frameworkRoot, '.claude', 'skills'), 'framework')) merged.set(k, v);
     if (template) {
       for (const [k, v] of scanSkillsDir(join(frameworkRoot, 'templates', template, '.claude', 'skills'), `template:${template}`)) merged.set(k, v);
+      for (const [k, v] of scanSkillsDir(join(frameworkRoot, 'templates', template, 'plugins', 'cortextos-agent-skills', 'skills'), `template:${template}:codex-plugin`)) merged.set(k, v);
     }
     for (const [k, v] of scanSkillsDir(join(agentDir, '.claude', 'skills'), 'agent')) merged.set(k, v);
+    for (const [k, v] of scanSkillsDir(join(agentDir, 'plugins', 'cortextos-agent-skills', 'skills'), 'agent:codex-plugin')) merged.set(k, v);
 
     const skills = Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name));
 
