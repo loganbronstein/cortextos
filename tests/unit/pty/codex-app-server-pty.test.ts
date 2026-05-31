@@ -832,31 +832,36 @@ describe('CodexAppServerPTY thread lifecycle', () => {
     });
   });
 
-  it('resumes the persisted thread in fresh mode when state exists', async () => {
+  it('starts a new thread in fresh mode even when persisted state exists', async () => {
     fsMocks.existsSync.mockReturnValue(true);
     fsMocks.readFileSync.mockReturnValue(JSON.stringify({
       threadId: 'persisted-fresh-thread',
       cwd: '/tmp/fw/orgs/acme/agents/codex-app-agent',
       updatedAt: '2026-05-07T00:00:00Z',
     }));
-    requestMock.mockResolvedValue({ result: { thread: { id: 'persisted-fresh-thread' } } });
+    requestMock.mockResolvedValue({ result: { thread: { id: 'fresh-replacement-thread' } } });
     const pty = new CodexAppServerPTY(mockEnv, {});
     (pty as unknown as { _rpc: { request: typeof requestMock } })._rpc = { request: requestMock };
 
     await (pty as unknown as { startOrResumeThread(mode: 'fresh' | 'continue'): Promise<void> }).startOrResumeThread('fresh');
 
-    expect(requestMock).toHaveBeenCalledWith('thread/resume', {
-      threadId: 'persisted-fresh-thread',
+    expect(requestMock).toHaveBeenCalledWith('thread/start', {
       cwd: '/tmp/fw/orgs/acme/agents/codex-app-agent',
       approvalPolicy: 'never',
       sandbox: 'danger-full-access',
       config: { features: { goals: true } },
-      excludeTurns: true,
+      sessionStartSource: 'startup',
+      experimentalRawEvents: false,
       persistExtendedHistory: true,
     });
     expect(requestMock).not.toHaveBeenCalledWith(
-      'thread/start',
+      'thread/resume',
       expect.anything(),
+    );
+    expect(fsMocks.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('codex-app-server-thread.json'),
+      expect.stringContaining('"threadId": "fresh-replacement-thread"'),
+      'utf-8',
     );
   });
 });
@@ -939,24 +944,65 @@ describe('CodexAppServerPTY thread/tokenUsage/updated → context_status.json', 
     const [path] = atomicWriteSyncMock.mock.calls[0];
     expect(path).toBe('/tmp/ctx/state/codex-app-agent/context_status.json');
     const payload = lastWrittenPayload()!;
-    expect(payload.used_percentage).toBeCloseTo(35, 5);
+    expect(payload.used_percentage).toBeCloseTo(0.5, 5);
     expect(payload.context_window_size).toBe(200000);
     expect(payload.exceeds_200k_tokens).toBe(false);
     expect(payload.session_id).toBe('thread-9');
     expect(typeof payload.written_at).toBe('string');
     expect(payload.current_usage).toEqual({
-      input_tokens: 60000,
-      output_tokens: 4000,
-      cache_read_input_tokens: 5000,
+      input_tokens: 1000,
+      output_tokens: 0,
+      cache_read_input_tokens: 0,
       cache_creation_input_tokens: 0,
     });
+  });
+
+  it('uses last non-cached usage for context percentage instead of cumulative billing total', () => {
+    const pty = new CodexAppServerPTY(mockEnv, {});
+    (pty as unknown as { _threadId: string })._threadId = 'thread-9';
+    feedTokenUsage(pty, {
+      last: { cachedInputTokens: 90000, inputTokens: 100000, outputTokens: 5000, reasoningOutputTokens: 0, totalTokens: 105000 },
+      total: { cachedInputTokens: 650000, inputTokens: 720000, outputTokens: 15000, reasoningOutputTokens: 2000, totalTokens: 735000 },
+      modelContextWindow: 258400,
+    });
+
+    const payload = lastWrittenPayload()!;
+    expect(payload.used_percentage).toBeCloseTo((15000 / 258400) * 100, 5);
+    expect(payload.exceeds_200k_tokens).toBe(false);
+  });
+
+  it('does not report 100 percent for repeated cached reads inside one Codex turn', () => {
+    const pty = new CodexAppServerPTY(mockEnv, {});
+    (pty as unknown as { _threadId: string })._threadId = 'thread-9';
+    feedTokenUsage(pty, {
+      last: {
+        cachedInputTokens: 764672,
+        inputTokens: 874932,
+        outputTokens: 7031,
+        reasoningOutputTokens: 0,
+        totalTokens: 881963,
+      },
+      total: {
+        cachedInputTokens: 764672,
+        inputTokens: 874932,
+        outputTokens: 7031,
+        reasoningOutputTokens: 0,
+        totalTokens: 881963,
+      },
+      modelContextWindow: 258400,
+    });
+
+    const payload = lastWrittenPayload()!;
+    expect(payload.used_percentage).toBeCloseTo(((881963 - 764672) / 258400) * 100, 5);
+    expect(payload.used_percentage).toBeLessThan(50);
+    expect(payload.exceeds_200k_tokens).toBe(false);
   });
 
   it('falls back to default 256000 cap when modelContextWindow is null', () => {
     const pty = new CodexAppServerPTY(mockEnv, {});
     (pty as unknown as { _threadId: string })._threadId = 'thread-9';
     feedTokenUsage(pty, {
-      last: { cachedInputTokens: 0, inputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0 },
+      last: { cachedInputTokens: 0, inputTokens: 64000, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 64000 },
       total: { cachedInputTokens: 0, inputTokens: 64000, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 64000 },
       modelContextWindow: null,
     });
@@ -970,7 +1016,7 @@ describe('CodexAppServerPTY thread/tokenUsage/updated → context_status.json', 
     const pty = new CodexAppServerPTY(mockEnv, { codex_context_cap: 100000 });
     (pty as unknown as { _threadId: string })._threadId = 'thread-9';
     feedTokenUsage(pty, {
-      last: { cachedInputTokens: 0, inputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0 },
+      last: { cachedInputTokens: 0, inputTokens: 50000, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 50000 },
       total: { cachedInputTokens: 0, inputTokens: 50000, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 50000 },
       modelContextWindow: null,
     });
@@ -980,11 +1026,11 @@ describe('CodexAppServerPTY thread/tokenUsage/updated → context_status.json', 
     expect(payload.used_percentage).toBeCloseTo(50, 5);
   });
 
-  it('flags exceeds_200k_tokens once total > 200k', () => {
+  it('flags exceeds_200k_tokens once current context > 200k', () => {
     const pty = new CodexAppServerPTY(mockEnv, {});
     (pty as unknown as { _threadId: string })._threadId = 'thread-9';
     feedTokenUsage(pty, {
-      last: { cachedInputTokens: 0, inputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0 },
+      last: { cachedInputTokens: 0, inputTokens: 210000, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 210000 },
       total: { cachedInputTokens: 0, inputTokens: 210000, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 210000 },
       modelContextWindow: 1000000,
     });
@@ -993,11 +1039,11 @@ describe('CodexAppServerPTY thread/tokenUsage/updated → context_status.json', 
     expect(payload.exceeds_200k_tokens).toBe(true);
   });
 
-  it('clamps used_percentage to 100 when totals exceed cap', () => {
+  it('clamps used_percentage to 100 when current context exceeds cap', () => {
     const pty = new CodexAppServerPTY(mockEnv, {});
     (pty as unknown as { _threadId: string })._threadId = 'thread-9';
     feedTokenUsage(pty, {
-      last: { cachedInputTokens: 0, inputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0 },
+      last: { cachedInputTokens: 0, inputTokens: 300000, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 300000 },
       total: { cachedInputTokens: 0, inputTokens: 300000, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 300000 },
       modelContextWindow: 256000,
     });
@@ -1016,11 +1062,11 @@ describe('CodexAppServerPTY thread/tokenUsage/updated → context_status.json', 
     expect(atomicWriteSyncMock).not.toHaveBeenCalled();
   });
 
-  it('skips the write when total.totalTokens is missing', () => {
+  it('skips the write when no context token count is available', () => {
     const pty = new CodexAppServerPTY(mockEnv, {});
     (pty as unknown as { _threadId: string })._threadId = 'thread-9';
     feedTokenUsage(pty, {
-      last: { cachedInputTokens: 0, inputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0, totalTokens: 0 },
+      last: { cachedInputTokens: 0, inputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
       total: { cachedInputTokens: 0, inputTokens: 100, outputTokens: 0, reasoningOutputTokens: 0 },
       modelContextWindow: 200000,
     });

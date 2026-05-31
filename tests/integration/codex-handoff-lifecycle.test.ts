@@ -42,11 +42,12 @@ function writeCodexContextStatus(opts: {
   threadId: string;
 }): void {
   const cap = opts.modelContextWindow ?? 256000;
-  const usedPct = cap > 0 ? Math.min(100, (opts.totalTokens / cap) * 100) : null;
+  const contextTokens = Math.max(0, opts.totalTokens - (opts.cachedInputTokens ?? 0));
+  const usedPct = cap > 0 ? Math.min(100, (contextTokens / cap) * 100) : null;
   const payload = {
     used_percentage: usedPct,
     context_window_size: cap,
-    exceeds_200k_tokens: opts.totalTokens > 200000,
+    exceeds_200k_tokens: contextTokens > 200000,
     current_usage: {
       input_tokens: opts.inputTokens ?? 0,
       output_tokens: opts.outputTokens ?? 0,
@@ -102,7 +103,7 @@ describe('codex handoff lifecycle — schema parity with claude', () => {
 
     const view = readContextStatusAsFastChecker();
     expect(view).not.toBeNull();
-    expect(view!.used_percentage).toBeCloseTo((150_000 / 256_000) * 100, 5);
+    expect(view!.used_percentage).toBeCloseTo((140_000 / 256_000) * 100, 5);
     expect(view!.exceeds_200k_tokens).toBe(false);
     expect(view!.session_id).toBe('mock-thread-abc');
     expect(view!.written_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
