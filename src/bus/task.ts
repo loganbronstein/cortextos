@@ -39,7 +39,11 @@ export function createTask(
   validatePriority(priority);
 
   const epoch = Date.now();
-  const rand = randomDigits(3);
+  // 8 digits: same-millisecond collision probability is ~1e-8 instead of ~1e-3.
+  // Two createTask calls in the same ms with a 3-digit suffix collided in CI
+  // (run 25618845172), making the new task's id equal to its declared blocker
+  // and tripping detectCycleOrThrow with "X ultimately blocks itself via X".
+  const rand = randomDigits(8);
   const taskId = `task_${epoch}_${rand}`;
   const now = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
 
@@ -483,7 +487,20 @@ export function completeTask(
   // Activity-feed event. Best-effort — the task is already persisted.
   if (assignee) {
     try {
-      logEvent(paths, assignee, taskOrg, 'task', 'task_completed', 'info', {
+      // Cross-org completion (caller's org ≠ task's org) is allowed via
+      // findTaskFile, but the caller's `paths.analyticsDir` is scoped to
+      // the caller's org. Rewrite the analytics path to the task's actual
+      // org so dashboards/metrics see the completion under the right tree.
+      // Only rewrite analyticsDir when the resolved task path is in the
+      // nested cross-org layout: <ctxRoot>/orgs/<org>/tasks/<taskId>.json.
+      // Flat/single-org test harnesses use <ctxRoot>/tasks + <ctxRoot>/analytics
+      // and should keep the caller-provided analyticsDir unchanged.
+      const pathOrgMatch = filePath.match(/[\\/]orgs[\\/](?<org>[^\\/]+)[\\/]tasks[\\/]/);
+      const fileOrg = pathOrgMatch?.groups?.org || '';
+      const eventPaths: BusPaths = fileOrg
+        ? { ...paths, analyticsDir: join(paths.ctxRoot, 'orgs', fileOrg, 'analytics') }
+        : paths;
+      logEvent(eventPaths, assignee, taskOrg, 'task', 'task_completed', 'info', {
         task_id: taskId,
         ...(result ? { result } : {}),
       });
