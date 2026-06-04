@@ -19,8 +19,11 @@ type LogFn = (msg: string) => void;
 // buffer tail to be byte-identical across 2 consecutive ~1s polls is enough to act
 // in ~2s while a healthy agent's animating spinner (which mutates the tail every
 // poll) never qualifies.
-const MODAL_FROZEN_POLLS = 2;   // consecutive polls: modal present + tail unchanged
-const MODAL_TAIL_LEN = 2048;    // bytes of buffer tail compared for staticness
+const MODAL_FROZEN_POLLS = 2;             // consecutive static polls before acting
+const MODAL_SCAN_LEN = 8000;              // chars of the current frame; modal-detect, idle-detect and
+                                          // staticness all run on this SAME char-bounded region (getRecent
+                                          // counts chunks, not chars, so we slice the ring tail ourselves)
+const MODAL_RESTART_COOLDOWN_MS = 30_000; // after firing, suppress re-fire while stop()+start() completes
 
 /**
  * Fast message checker for a single agent.
@@ -71,8 +74,9 @@ export class FastChecker {
   // modal signature persists with a byte-identical buffer tail across consecutive
   // polls. An agent merely printing the modal in active output keeps scrolling,
   // so its tail changes every poll and never trips this.
-  private ctxModalLastTail: string | null = null; // buffer tail last poll the modal was seen
-  private ctxModalFrozenPolls: number = 0;         // consecutive polls: modal seen + tail unchanged
+  private ctxModalLastTail: string | null = null; // current frame last poll the modal was seen frozen
+  private ctxModalFrozenPolls: number = 0;         // consecutive polls: modal present + frame unchanged
+  private ctxModalRestartAt: number = 0;           // last time the modal gate fired a restart (re-fire cooldown)
 
   constructor(
     agent: AgentProcess,
@@ -957,15 +961,27 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     //      went idle. An idle/ready session renders the input bottom-bar ("/clear to
     //      save N tokens", "new task?", "? for shortcuts"); a wedged session cannot
     //      accept input and shows none of these. hasIdleInputPrompt() excludes it.
-    const modalBuf = this.agent.getOutputBuffer()?.getRecent(8000) ?? '';
-    if (detectContextLimitModal(modalBuf) && !hasIdleInputPrompt(modalBuf)) {
-      const tail = modalBuf.slice(-MODAL_TAIL_LEN);
-      this.ctxModalFrozenPolls = tail === this.ctxModalLastTail ? this.ctxModalFrozenPolls + 1 : 1;
-      this.ctxModalLastTail = tail;
+    // Scan and freeze the SAME char-bounded current-frame region. getRecent(n) counts
+    // CHUNKS not chars, so scanning getRecent(8000) for the modal while comparing only a
+    // fixed-byte tail for staticness would let an OLD quote (anywhere in a large window)
+    // pair with an unrelated static tail. Running modal-detect, idle-detect and the
+    // staticness compare on one ~one-frame slice means we only act on the modal as the
+    // CURRENT frozen frame.
+    const frame = (this.agent.getOutputBuffer()?.getRecent() ?? '').slice(-MODAL_SCAN_LEN);
+    const wedgeShape = detectContextLimitModal(frame) && !hasIdleInputPrompt(frame);
+    if (now - this.ctxModalRestartAt < MODAL_RESTART_COOLDOWN_MS) {
+      // A wedge restart just fired. stop()+start() takes a few seconds, during which the
+      // old frozen buffer is still visible; suppressing re-fire keeps one wedge counting as
+      // one restart against the circuit breaker. After the cooldown, a still-wedged session
+      // (failed restart) re-fires and the circuit breaker bounds the repeats.
+    } else if (wedgeShape) {
+      this.ctxModalFrozenPolls = frame === this.ctxModalLastTail ? this.ctxModalFrozenPolls + 1 : 1;
+      this.ctxModalLastTail = frame;
       if (this.ctxModalFrozenPolls >= MODAL_FROZEN_POLLS) {
         this.log(`Context-limit /compact modal frozen in PTY (static ${this.ctxModalFrozenPolls} polls, no input prompt) — force restarting (self-clear)`);
         this.ctxModalFrozenPolls = 0;
         this.ctxModalLastTail = null;
+        this.ctxModalRestartAt = now;
         this.forceContextRestart('context-limit /compact modal — session frozen (static buffer, no input prompt)');
         return;
       }

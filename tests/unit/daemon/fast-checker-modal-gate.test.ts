@@ -101,6 +101,15 @@ describe('FastChecker — /compact modal frozen-gate', () => {
     expect(restartSpy).not.toHaveBeenCalled();
   });
 
+  // Finding #2 guard: forceContextRestart is fire-and-forget and stop()+start() takes
+  // seconds, during which the frozen buffer is still visible. The cooldown must keep one
+  // wedge from firing repeatedly and overcounting the circuit breaker.
+  it('fires only ONCE for a persistent wedge across many polls (cooldown suppresses re-fire)', async () => {
+    buf = realWedge;
+    for (let i = 0; i < 10; i++) await checker.checkContextStatus();
+    expect(restartSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('resets the frozen counter when the modal clears, so a later wedge still needs 2 fresh polls', async () => {
     buf = realWedge;
     await checker.checkContextStatus();          // poll 1: armed (count = 1)

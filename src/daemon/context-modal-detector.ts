@@ -63,11 +63,18 @@ export function hasIdleInputPrompt(rawPtyOutput: string): boolean {
 }
 
 /**
- * Replaces every CSI escape sequence with a single space and collapses whitespace, so
+ * Replaces terminal escape sequences with a single space and collapses whitespace, so
  * both the contiguous and the cursor-fragmented TUI render of a line normalize to the
- * same token stream. The CSI matcher uses the spec-correct final-byte class [@-~]
- * (0x40–0x7E), so it strips any cursor-move command at any column / terminal width.
+ * same token stream. We strip:
+ *  - OSC sequences (ESC ] … BEL | ESC \) first — e.g. the title-setting escapes the TUI
+ *    interleaves — so their payload can't fuse modal tokens together.
+ *  - CSI sequences using the full spec grammar: params 0x30–0x3F, intermediate bytes
+ *    0x20–0x2F, final byte 0x40–0x7E — so any cursor-move/SGR at any column, width, or
+ *    with intermediate bytes is removed, not just the simple `ESC [ <digits> <final>` form.
  */
 function normalizeCsi(s: string): string {
-  return s.replace(/\x1b\[[0-9;?]*[@-~]/g, ' ').replace(/\s+/g, ' ');
+  return s
+    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, ' ')
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ' ')
+    .replace(/\s+/g, ' ');
 }
