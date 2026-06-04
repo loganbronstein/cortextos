@@ -180,6 +180,9 @@ export interface AgentConfig {
   ctx_warning_threshold?: number;
   /** Context window % at which to inject handoff prompt and hard-restart. Default: 80. */
   ctx_handoff_threshold?: number;
+  /** Alias for `ctx_handoff_threshold` (configs since the 2026-05-11 baseline use this name).
+   * The daemon reads `ctx_handoff_threshold ?? ctx_autoreset_threshold`. */
+  ctx_autoreset_threshold?: number;
   /**
    * Fallback context window cap (tokens) for codex-app-server agents when the
    * server's `thread/tokenUsage/updated` event reports `modelContextWindow=null`.

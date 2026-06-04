@@ -10,8 +10,17 @@ import { AgentProcess } from './agent-process.js';
 import type { TelegramAPI } from '../telegram/api.js';
 import { KEYS } from '../pty/inject.js';
 import { stripControlChars } from '../utils/validate.js';
+import { detectContextLimitModal, hasIdleInputPrompt } from './context-modal-detector.js';
 
 type LogFn = (msg: string) => void;
+
+// /compact modal frozen-gate tuning. A real wedge is STATIC for minutes (scribe's
+// 2026-06-04 freeze redrew the modal only ~every 7min over 5.5h), so requiring the
+// buffer tail to be byte-identical across 2 consecutive ~1s polls is enough to act
+// in ~2s while a healthy agent's animating spinner (which mutates the tail every
+// poll) never qualifies.
+const MODAL_FROZEN_POLLS = 2;   // consecutive polls: modal present + tail unchanged
+const MODAL_TAIL_LEN = 2048;    // bytes of buffer tail compared for staticness
 
 /**
  * Fast message checker for a single agent.
@@ -58,6 +67,12 @@ export class FastChecker {
   private ctxCircuitBrokenAt: number | null = null; // when circuit tripped (null = healthy)
   // Persisted to disk so --continue restarts don't reset the circuit breaker
   private ctxCircuitFile: string = '';
+  // /compact modal frozen-gate: a real wedge is STATIC, so we only act when the
+  // modal signature persists with a byte-identical buffer tail across consecutive
+  // polls. An agent merely printing the modal in active output keeps scrolling,
+  // so its tail changes every poll and never trips this.
+  private ctxModalLastTail: string | null = null; // buffer tail last poll the modal was seen
+  private ctxModalFrozenPolls: number = 0;         // consecutive polls: modal seen + tail unchanged
 
   constructor(
     agent: AgentProcess,
@@ -882,7 +897,12 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
         const cfg = JSON.parse(readFileSync(configPath, 'utf-8'));
         const config = this.agent.getConfig();
         config.ctx_warning_threshold = cfg.ctx_warning_threshold;
-        config.ctx_handoff_threshold = cfg.ctx_handoff_threshold;
+        // Accept `ctx_autoreset_threshold` as an alias for `ctx_handoff_threshold`.
+        // Agent configs authored since the 2026-05-11 baseline use the former, but
+        // the daemon only ever read the latter — leaving those agents in observe-only
+        // mode (auto-reset never armed). Reading either key re-arms them with no
+        // per-agent config churn. See ROOT CAUSE: scribe context-exhaustion 2026-06-04.
+        config.ctx_handoff_threshold = cfg.ctx_handoff_threshold ?? cfg.ctx_autoreset_threshold;
         this.ctxConfigMtime = mtime;
       }
     } catch { /* keep stale values */ }
@@ -911,6 +931,48 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
       } else {
         return; // still paused
       }
+    }
+
+    // PTY hard signal — the "/compact" context-limit modal. Runs BEFORE the
+    // context_status.json read below and acts regardless of threshold config:
+    // when a session freezes at the modal the statusline stops writing
+    // context_status.json, so it goes stale and the threshold path (which returns
+    // early on a stale/missing file) goes blind — the exact failure that wedged
+    // scribe ~5.5h on 2026-06-04. forceContextRestart() does stop()+start(), which
+    // kills the frozen process and brings up a clean fresh session, self-clearing
+    // the wedge regardless of bridge-file staleness (this path is bridge-independent).
+    //
+    // FROZEN-GATE (false-positive guard): the fleet routinely *quotes* this modal in
+    // normal output (incident write-ups, this very fix), and restarting a healthy
+    // agent for talking about the modal would be a worse regression than the bug. Two
+    // grounded discriminators (verified against real 2026-06-04 captures of scribe's
+    // wedge vs boss/marketing quoting the modal):
+    //   1. STATIC: a real wedge is byte-frozen — it redrew the modal frame only
+    //      ~every 7min over a 5.5h freeze, so the buffer tail is identical across
+    //      consecutive polls. An agent printing the modal in active output keeps
+    //      scrolling (its spinner counts "for Ns" and animates every poll), so its
+    //      tail changes and never qualifies. Both wedge and healthy show a ✻ spinner;
+    //      only ANIMATION separates them, which the tail comparison captures.
+    //   2. NO INPUT PROMPT: the one static FP is an agent that quoted the modal then
+    //      went idle. An idle/ready session renders the input bottom-bar ("/clear to
+    //      save N tokens", "new task?", "? for shortcuts"); a wedged session cannot
+    //      accept input and shows none of these. hasIdleInputPrompt() excludes it.
+    const modalBuf = this.agent.getOutputBuffer()?.getRecent(8000) ?? '';
+    if (detectContextLimitModal(modalBuf) && !hasIdleInputPrompt(modalBuf)) {
+      const tail = modalBuf.slice(-MODAL_TAIL_LEN);
+      this.ctxModalFrozenPolls = tail === this.ctxModalLastTail ? this.ctxModalFrozenPolls + 1 : 1;
+      this.ctxModalLastTail = tail;
+      if (this.ctxModalFrozenPolls >= MODAL_FROZEN_POLLS) {
+        this.log(`Context-limit /compact modal frozen in PTY (static ${this.ctxModalFrozenPolls} polls, no input prompt) — force restarting (self-clear)`);
+        this.ctxModalFrozenPolls = 0;
+        this.ctxModalLastTail = null;
+        this.forceContextRestart('context-limit /compact modal — session frozen (static buffer, no input prompt)');
+        return;
+      }
+    } else if (this.ctxModalFrozenPolls !== 0) {
+      // modal cleared, output moved on, or input prompt back — reset frozen tracking
+      this.ctxModalFrozenPolls = 0;
+      this.ctxModalLastTail = null;
     }
 
     // Read the bridge file written by hook-context-status
