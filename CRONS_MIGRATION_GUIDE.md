@@ -7,8 +7,8 @@ Crons used to die on every agent restart. They now survive indefinitely. This gu
 ## What Changed
 
 - **Before:** Crons were session-local (CronCreate via Claude API). Each agent restart meant crons were gone and had to be manually re-created.
-- **After:** Crons live in `${CTX_ROOT}/state/{agent}/crons.json` and are daemon-managed. The scheduler reads this file on every agent start and re-schedules all entries automatically.
-- **Migration:** The daemon auto-migrates `config.json` crons to `crons.json` on first boot per agent. A marker file `.crons-migrated` prevents re-runs. The source `config.json` is left untouched — non-destructive.
+- **After:** Crons live in `${CTX_ROOT}/.cortextOS/state/agents/{agent}/crons.json` and are daemon-managed. The scheduler reads this file on every agent start and re-schedules all entries automatically.
+- **Migration:** The daemon auto-migrates `config.json` crons to `crons.json` on first boot per agent (a `.crons-migrated` marker records that the first full migration ran). On later boots it does **not** stop there: it runs a convergent **diff-add** that adds any `config.json` cron missing from `crons.json` (by name). This means a cron you add to `config.json` after the first migration is picked up on the next boot without `--force` — and a lost/empty `crons.json` self-heals from `config.json`. Diff-add is add-only: it never overwrites an existing entry, never deletes a cron added live (one in `crons.json` but not `config.json`), and writes nothing when already in sync. The source `config.json` is left untouched — non-destructive. To propagate an *edit* to an existing cron, or to prune a cron removed from `config.json`, use `--force` (full rebuild).
 
 ---
 
@@ -30,28 +30,35 @@ cortextos bus list-crons <agent>
 cortextos bus get-cron-log <agent>
 
 # Marker confirming migration ran (exists = done)
-ls "${CTX_ROOT}/state/{agent}/.crons-migrated"
+ls "${CTX_ROOT}/.cortextOS/state/agents/{agent}/.crons-migrated"
 
 # Populated cron definitions
-cat "${CTX_ROOT}/state/{agent}/crons.json"
+cat "${CTX_ROOT}/.cortextOS/state/agents/{agent}/crons.json"
 ```
 
 ---
 
 ## Manual Migration (if needed)
 
-If auto-migration did not run, or you need to re-run it for a specific agent:
+If auto-migration did not run, or you added a cron to `config.json` and want it live now:
 
 ```bash
-# Re-run for one agent
+# Converge one agent: adds any config.json cron missing from crons.json (diff-add)
 cortextos bus migrate-crons <agent>
 
-# Re-run for all enabled agents
+# Converge every agent directory under orgs/*/agents/*
 cortextos bus migrate-crons
 
-# Bypass the marker and re-run regardless
+# Full rebuild from config.json (propagates edits, prunes removed crons)
 cortextos bus migrate-crons <agent> --force
 ```
+
+Without `--force`, `migrate-crons` is a safe convergent diff-add: it only *adds* config
+crons missing from `crons.json` and leaves everything else as-is (no overwrite, no delete),
+so it is safe to re-run anytime. When run against a **live daemon**, the command signals the
+scheduler to reload, so a newly added cron is scheduled immediately — no restart needed.
+Use `--force` only when you need to push an edited cron definition or remove a cron that you
+deleted from `config.json`.
 
 ---
 
@@ -138,13 +145,13 @@ Two opt-outs prevent false positives on lines that intentionally talk about the 
 - If `crons.json` is corrupt (parse error), `readCrons()` automatically falls back to `crons.json.bak` — the previous good copy written by `writeCrons()`. A warning is logged to stderr; no operator action is required for a single corruption event.
 - If both the primary file and the `.bak` are unparseable, `readCrons()` returns `[]` and the scheduler starts with an empty schedule. Fix: write a valid `crons.json` using `cortextos bus add-cron`, or restore from a known-good backup.
 - **Reload-to-empty protection (`lastGoodSchedule`):** if a `reload()` produces an empty schedule on a running scheduler (e.g. transient file corruption mid-tick), the scheduler retains the last successfully loaded schedule in memory and logs a warning. Crons keep firing until the file is repaired. This protection applies to reloads only — an empty file at initial `start()` produces an empty schedule normally.
-- You can verify the file is valid JSON: `cat "${CTX_ROOT}/state/{agent}/crons.json" | python3 -m json.tool`
+- You can verify the file is valid JSON: `cat "${CTX_ROOT}/.cortextOS/state/agents/{agent}/crons.json" | python3 -m json.tool`
 
 **Disk full (ENOSPC / EACCES) during tick:**
 - If `updateCron()` fails when persisting `last_fired_at` after a successful fire (e.g. disk full or read-only filesystem), the error is caught and logged to stderr. The in-memory schedule is kept intact and crons continue firing. State (`last_fired_at`, `fire_count`) will not be persisted until the write succeeds, so it may be lost if the daemon restarts before disk space is recovered.
 
 **Need to revert:**
-- Delete `${CTX_ROOT}/state/{agent}/crons.json` and `${CTX_ROOT}/state/{agent}/.crons-migrated`.
+- Delete `${CTX_ROOT}/.cortextOS/state/agents/{agent}/crons.json` and `${CTX_ROOT}/.cortextOS/state/agents/{agent}/.crons-migrated`.
 - The daemon will re-migrate from `config.json` on next start.
 - Adding crons back via CronCreate is not recommended — session-local crons are unreliable.
 

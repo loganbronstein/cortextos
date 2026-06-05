@@ -742,10 +742,14 @@ export class IPCServer {
           if (!agentToReload) {
             response = { success: false, error: 'reload-crons requires agent name' };
           } else {
-            // crons.json was already written atomically by the CLI — acknowledge the reload.
-            // CronScheduler picks up the change on its next 30s tick.
-            this.agentManager.reloadCrons(agentToReload);
-            response = { success: true, data: `Crons reloaded for ${agentToReload}` };
+            // crons.json was already written by the CLI. reloadCrons() re-reads it into
+            // the live scheduler and returns false when the agent has no scheduler to
+            // reload — report that honestly so the CLI can warn the operator instead of
+            // claiming a live reload that did not happen.
+            const ok = this.agentManager.reloadCrons(agentToReload);
+            response = ok
+              ? { success: true, data: `Crons reloaded for ${agentToReload}` }
+              : { success: false, error: `Agent '${agentToReload}' has no live scheduler to reload — crons.json updated on disk; restart the agent to schedule it` };
           }
           break;
         }
