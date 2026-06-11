@@ -700,7 +700,7 @@ describe('Scenario 4: Support troubleshooting missing crons', () => {
     expect(isMigrated(tmpRoot, agent)).toBe(true);
   });
 
-  it('4e: stale .migrated marker without crons.json — force re-migration recovers crons', () => {
+  it('4e: stale .migrated marker without crons.json — migration SELF-HEALS via diff-add (no --force needed)', () => {
     const agent = 'stale-marker-agent';
 
     // Simulate: marker exists but crons.json was deleted (stale marker scenario)
@@ -710,10 +710,9 @@ describe('Scenario 4: Support troubleshooting missing crons', () => {
 
     // crons.json is missing
     expect(existsSync(cronsJsonPath(agent))).toBe(false);
-    // But isMigrated returns true (stale marker fools it)
+    // isMigrated returns true (stale marker present)
     expect(isMigrated(tmpRoot, agent)).toBe(true);
 
-    // Without force: migration skipped (stale marker blocks it)
     const agentDir = join(tmpRoot, 'orgs', 'lifeos', 'agents', agent);
     mkdirSync(agentDir, { recursive: true });
     const configJsonPath = join(agentDir, 'config.json');
@@ -721,13 +720,24 @@ describe('Scenario 4: Support troubleshooting missing crons', () => {
       crons: [{ name: 'hb', type: 'recurring', interval: '1h', prompt: 'Heartbeat.' }],
     }), 'utf-8');
 
+    // WITHOUT --force: the already-migrated path now runs a convergent diff-add. The
+    // config cron is missing from the (absent) crons.json, so it is re-added — the
+    // marker no longer silently blocks recovery (pre-fix this returned
+    // 'skipped-already-migrated' and left the cron dropped — the rd-watch bug).
     const r1 = migrateCronsForAgent(agent, configJsonPath, tmpRoot, { log: () => {} });
-    expect(r1.status).toBe('skipped-already-migrated');
-
-    // With --force: marker removed, migration runs, crons.json created
-    const r2 = migrateCronsForAgent(agent, configJsonPath, tmpRoot, { force: true, log: () => {} });
-    expect(r2.status).toBe('migrated');
+    expect(r1.status).toBe('migrated');
+    expect(r1.cronsMigrated).toBe(1);
     expect(existsSync(cronsJsonPath(agent))).toBe(true);
+    expect(readCrons(agent)).toHaveLength(1);
+
+    // Second run is a clean no-op now that crons.json is in sync.
+    const r2 = migrateCronsForAgent(agent, configJsonPath, tmpRoot, { log: () => {} });
+    expect(r2.status).toBe('skipped-already-migrated');
+    expect(readCrons(agent)).toHaveLength(1);
+
+    // --force still does a clean full rebuild.
+    const r3 = migrateCronsForAgent(agent, configJsonPath, tmpRoot, { force: true, log: () => {} });
+    expect(r3.status).toBe('migrated');
     expect(readCrons(agent)).toHaveLength(1);
   });
 

@@ -1910,14 +1910,24 @@ function fmtTs(iso: string | undefined): string {
 }
 
 /**
- * Send a reload-crons IPC signal to the daemon (non-blocking, best-effort).
- * Silently swallows errors — the daemon will pick up changes on its next tick.
+ * Tell a running daemon to reload an agent's crons.json. Returns true only when the
+ * daemon actually reloaded the live scheduler; false if the daemon is down, the IPC
+ * failed, or the daemon could not reload (no scheduler for that agent). Non-fatal — but
+ * the live scheduler only re-reads on start()/reload(), NOT on a timer, so a false
+ * return means crons.json on disk is ahead of the live schedule until a reload/restart.
+ * Callers that mutate at runtime (e.g. migrate-crons diff-add) should surface a false.
+ *
+ * Note: IPCClient.send() RESOLVES { success: false } on a down daemon (ENOENT/
+ * ECONNREFUSED) rather than throwing, so we must inspect resp.success, not just catch.
  */
-async function signalCronReload(agentName: string, instanceId: string): Promise<void> {
+async function signalCronReload(agentName: string, instanceId: string): Promise<boolean> {
   try {
     const ipc = new IPCClient(instanceId);
-    await ipc.send({ type: 'reload-crons', agent: agentName, source: 'cortextos bus cron-cmd' });
-  } catch { /* non-fatal — scheduler picks up file change on next 30s tick */ }
+    const resp = await ipc.send({ type: 'reload-crons', agent: agentName, source: 'cortextos bus cron-cmd' });
+    return resp.success === true;
+  } catch {
+    return false;
+  }
 }
 
 busCommand
@@ -2217,7 +2227,7 @@ busCommand
 busCommand
   .command('migrate-crons')
   .description('Migrate crons from config.json to crons.json for one or all agents')
-  .argument('[agent]', 'Agent name to migrate (omit to migrate all enabled agents)')
+  .argument('[agent]', 'Agent name to migrate (omit to migrate every agent directory under orgs/*/agents/*)')
   .option('--force', 'Re-run migration even if the marker file already exists')
   .action(async (agentArg: string | undefined, opts: { force?: boolean }) => {
     const { migrateCronsForAgent: migrateSingle, migrateAllAgents: migrateAll } = await import('../daemon/cron-migration.js');
@@ -2250,11 +2260,22 @@ busCommand
         process.exit(1);
       }
 
-      const result = migrateSingle(agentArg, configPath, ctxRoot, migOpts);
+      let result;
+      try {
+        result = migrateSingle(agentArg, configPath, ctxRoot, migOpts);
+      } catch (err) {
+        // diff-add now surfaces real addCron failures (lock/FS/ENOSPC) instead of
+        // masking them as benign — fail loud rather than report a clean migrate.
+        console.error(`Error migrating ${agentArg}: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
 
       switch (result.status) {
         case 'skipped-already-migrated':
-          console.log(`Skipped ${agentArg}: already migrated (use --force to re-run)`);
+          console.log(
+            `Skipped ${agentArg}: already migrated, crons.json in sync (use --force to rebuild)` +
+            (result.cronsSkipped?.length ? ` — WARNING: ${result.cronsSkipped.length} invalid config cron(s) ignored (${result.cronsSkipped.join(', ')})` : '')
+          );
           break;
         case 'no-config':
           console.log(`Skipped ${agentArg}: no config.json found`);
@@ -2267,16 +2288,33 @@ busCommand
             `Migrated ${agentArg}: ${result.cronsMigrated} cron(s) migrated` +
             (result.cronsSkipped?.length ? `, ${result.cronsSkipped.length} skipped (${result.cronsSkipped.join(', ')})` : '')
           );
+          // The diff-add can write crons at runtime (not just first boot), so a live
+          // daemon must be told to reload — otherwise the scheduler keeps the stale
+          // in-memory schedule until restart. add/remove/update-cron do the same.
+          if (!(await signalCronReload(agentArg, env.instanceId))) {
+            console.warn(`  Note: crons.json updated on disk, but live scheduler reload failed (daemon not running or IPC error) — restart/reload the daemon to schedule the new cron(s).`);
+          }
           break;
       }
     } else {
       // All-agents migration
       const summary = migrateAll(frameworkRoot, ctxRoot, migOpts);
 
+      // Reload the live scheduler for every agent whose crons.json actually changed,
+      // so runtime diff-adds are scheduled without a daemon restart. Track reload
+      // failures (daemon down / IPC error) so they are surfaced, not silently dropped.
+      const reloadFailures: string[] = [];
+      for (const r of summary.results) {
+        if (r.status === 'migrated') {
+          if (!(await signalCronReload(r.agentName, env.instanceId))) reloadFailures.push(r.agentName);
+        }
+      }
+
       const migrated = summary.results.filter(r => r.status === 'migrated').length;
       const skippedAlready = summary.results.filter(r => r.status === 'skipped-already-migrated').length;
       const noConfig = summary.results.filter(r => r.status === 'no-config').length;
       const noCrons = summary.results.filter(r => r.status === 'no-crons').length;
+      const failures = summary.results.filter(r => r.status === 'failed');
 
       console.log(`\nMigration summary:`);
       console.log(`  Agents processed    : ${summary.processed}`);
@@ -2284,6 +2322,14 @@ busCommand
       console.log(`  Already migrated    : ${skippedAlready}`);
       console.log(`  No config.json      : ${noConfig}`);
       console.log(`  No crons in config  : ${noCrons}`);
+      console.log(`  Failed              : ${failures.length}`);
+      if (reloadFailures.length > 0) {
+        console.warn(`  Live reload failed for: ${reloadFailures.join(', ')} (crons.json updated on disk; restart/reload the daemon to schedule)`);
+      }
+      if (failures.length > 0) {
+        console.error(`\nERROR: ${failures.length} agent(s) failed migration: ${failures.map(f => `${f.agentName} (${f.error ?? 'unknown error'})`).join('; ')}`);
+        process.exit(1);
+      }
     }
   });
 

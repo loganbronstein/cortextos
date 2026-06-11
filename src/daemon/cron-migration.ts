@@ -4,10 +4,21 @@
  * Migrates each agent's `crons` array from its config.json into the external
  * persistent crons.json format understood by the daemon CronScheduler.
  *
- * ## Idempotency
+ * ## Idempotency & convergence
  * A zero-byte marker file at `{CTX_ROOT}/.cortextOS/state/agents/{agent}/.crons-migrated`
- * signals that migration already ran.  The migration is skipped entirely when the
- * marker exists, unless `force: true` is passed (which deletes the marker first).
+ * records that the first full migration ran. On the FIRST run (no marker) the whole
+ * `crons` array is converted and written, then the marker is set.
+ *
+ * On LATER runs (marker present) the migration no longer skips outright — that was the
+ * one-shot-marker drop bug, where a cron added to config.json after the first migration
+ * was lost forever (scribe's rd-terminal-bridge-watch, 2026-06-04). Instead it runs a
+ * convergent DIFF-ADD: any config cron missing from crons.json (by name) is appended.
+ * It is add-only — existing crons.json entries are never overwritten and live-added
+ * crons (absent from config) are never deleted, so it is safe to run on every boot and
+ * returns 'skipped-already-migrated' (no write) when already in sync.
+ *
+ * `force: true` still deletes the marker and does a clean full rebuild from config
+ * (use it to propagate edits or prune entries removed from config).
  *
  * ## One-shot crons
  * CronDefinition supports interval-based and cron-expression schedules only —
@@ -27,7 +38,7 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import type { CronDefinition, CronEntry } from '../types/index.js';
-import { readCrons, writeCrons } from '../bus/crons.js';
+import { readCrons, writeCrons, addCron } from '../bus/crons.js';
 import { CRONS_DIRECTORY } from '../bus/crons-schema.js';
 import { scanAgentDir } from '../utils/cron-teaching-scanner.js';
 
@@ -238,6 +249,138 @@ function convertEntry(
   return { cron: def };
 }
 
+/**
+ * Extract the `crons` array from a parsed config.json object.
+ * Missing key or non-array → empty list (treated as "no crons" by callers).
+ */
+function extractConfigCrons(rawConfig: unknown): CronEntry[] {
+  if (
+    rawConfig !== null &&
+    typeof rawConfig === 'object' &&
+    'crons' in rawConfig &&
+    Array.isArray((rawConfig as { crons?: unknown }).crons)
+  ) {
+    return [...((rawConfig as { crons: CronEntry[] }).crons)];
+  }
+  return [];
+}
+
+/**
+ * Already-migrated convergence path. Adds any config.json cron whose name is missing
+ * from crons.json, fixing the one-shot-marker drop without a `--force` full rebuild.
+ *
+ * Add-only, keyed by cron name:
+ *   - never overwrites an existing crons.json entry (preserves live edits / state),
+ *   - never deletes entries absent from config (preserves live-added crons; removals
+ *     stay the operator's job via remove-cron + a config edit, unchanged from before),
+ *   - returns 'skipped-already-migrated' (and does not rewrite crons.json) when already
+ *     in sync, so the idempotent no-op case behaves exactly as it did pre-fix.
+ *
+ * Self-heals the exact failure: if crons.json is empty/lost while the marker persists,
+ * every config cron is "missing" and gets re-added.
+ */
+function diffAddMissingCrons(
+  agentName: string,
+  configJsonPath: string,
+  log: (msg: string) => void,
+): MigrationResult {
+  // Never clobber a live crons.json when we cannot read the desired state.
+  if (!existsSync(configJsonPath)) {
+    log(`"${agentName}" already migrated and config.json is gone — leaving crons.json untouched`);
+    return { agentName, status: 'skipped-already-migrated' };
+  }
+
+  let rawConfig: unknown;
+  try {
+    rawConfig = JSON.parse(readFileSync(configJsonPath, 'utf-8'));
+  } catch (err) {
+    log(
+      `"${agentName}" already migrated; config.json unreadable — leaving crons.json untouched. ` +
+        `Error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return { agentName, status: 'skipped-already-migrated' };
+  }
+
+  const configCrons = extractConfigCrons(rawConfig);
+  if (configCrons.length === 0) {
+    return { agentName, status: 'skipped-already-migrated' };
+  }
+
+  const existingNames = new Set(readCrons(agentName).map((c) => c.name));
+
+  const toAdd: CronDefinition[] = [];
+  const skipped: string[] = [];
+  for (const entry of configCrons) {
+    if (existingNames.has(entry.name)) continue; // already live — preserve, never overwrite
+    const result = convertEntry(entry, agentName);
+    if ('cron' in result) {
+      toAdd.push(result.cron);
+    } else {
+      skipped.push(entry.name);
+      log(`  Skipped diff-add for "${agentName}": ${result.skip}`);
+    }
+  }
+
+  if (toAdd.length === 0) {
+    if (skipped.length > 0) {
+      // Nothing valid to add, but new config crons were unconvertible — surface them
+      // rather than reporting a clean "in sync" that hides a bad config entry.
+      log(
+        `Diff-add for "${agentName}": no valid crons to add; ` +
+          `${skipped.length} invalid config cron(s) skipped (${skipped.join(', ')})`,
+      );
+      return { agentName, status: 'skipped-already-migrated', cronsSkipped: skipped };
+    }
+    log(`Skipping migration for "${agentName}" — already migrated, crons.json in sync`);
+    return { agentName, status: 'skipped-already-migrated' };
+  }
+
+  // Add each missing cron via addCron, which takes the per-agent file lock and
+  // collision-checks — so this read-modify-write is race-safe against a concurrent
+  // live add-cron/remove-cron, and is add-only by construction (it appends, never
+  // overwrites). A collision (cron added concurrently between our snapshot and the
+  // locked add) is benign: the cron is already present, so we count it as skipped.
+  let added = 0;
+  for (const cron of toAdd) {
+    try {
+      addCron(agentName, cron);
+      added++;
+      log(
+        `  Diff-add cron "${cron.name}" for "${agentName}" — present in config.json but missing ` +
+          `from crons.json (schedule: ${cron.schedule})`,
+      );
+    } catch (err) {
+      // addCron throws on a name collision (benign — a concurrent add already placed
+      // the cron) but ALSO on real failures (lock contention, FS perms, ENOSPC, atomic
+      // write). Only treat it as benign if the cron is now actually present; otherwise
+      // the cron is still missing and this is a genuine failure we must NOT under-report.
+      const present = readCrons(agentName).some((c) => c.name === cron.name);
+      if (present) {
+        log(`  Diff-add for "${agentName}": "${cron.name}" already present (concurrent add) — skipping`);
+      } else {
+        throw new Error(
+          `Diff-add failed to add cron "${cron.name}" for "${agentName}" and it is still missing: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+  }
+
+  if (added === 0) {
+    // Every intended add raced to a collision (all now present) — still surface any
+    // invalid config crons that were skipped along the way.
+    return { agentName, status: 'skipped-already-migrated', cronsSkipped: skipped.length > 0 ? skipped : undefined };
+  }
+
+  log(`Diff-add complete for "${agentName}": added ${added} cron(s) missing from crons.json`);
+  return {
+    agentName,
+    status: 'migrated',
+    cronsMigrated: added,
+    cronsSkipped: skipped.length > 0 ? skipped : undefined,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Per-agent migration
 // ---------------------------------------------------------------------------
@@ -252,12 +395,14 @@ export interface MigrationOptions {
 export interface MigrationResult {
   /** Agent name processed. */
   agentName: string;
-  /** Disposition: skipped-already-migrated | no-config | no-crons | migrated */
-  status: 'skipped-already-migrated' | 'no-config' | 'no-crons' | 'migrated';
+  /** Disposition: skipped-already-migrated | no-config | no-crons | migrated | failed */
+  status: 'skipped-already-migrated' | 'no-config' | 'no-crons' | 'migrated' | 'failed';
   /** Number of crons written to crons.json (only set when status === "migrated"). */
   cronsMigrated?: number;
   /** Names of crons that were skipped (one-shots, missing fields, etc.). */
   cronsSkipped?: string[];
+  /** Error message when status === "failed" (an unexpected exception during migration). */
+  error?: string;
 }
 
 /**
@@ -312,10 +457,14 @@ function runMigrationCore(
     log(`Force flag set — cleared migration marker for "${agentName}"`);
   }
 
-  // Idempotency check: already migrated → skip
+  // Already migrated: do NOT skip outright. Returning early here was the one-shot-marker
+  // drop bug — a cron added to config.json AFTER the first migration (e.g. scribe's
+  // rd-terminal-bridge-watch, 2026-06-04) was never picked up, because the marker made
+  // every later run a no-op. Instead run a convergent DIFF-ADD that adds any config cron
+  // missing from crons.json. Still returns 'skipped-already-migrated' when in sync, so the
+  // idempotent no-op case is unchanged.
   if (isMigrated(ctxRoot, agentName)) {
-    log(`Skipping migration for "${agentName}" — already migrated`);
-    return { agentName, status: 'skipped-already-migrated' };
+    return diffAddMissingCrons(agentName, configJsonPath, log);
   }
 
   // Read config.json — no-op on missing file
@@ -342,15 +491,7 @@ function runMigrationCore(
   }
 
   // Extract crons array — treat missing / empty as "no crons"
-  const configCrons: CronEntry[] = [];
-  if (
-    rawConfig !== null &&
-    typeof rawConfig === 'object' &&
-    'crons' in rawConfig &&
-    Array.isArray((rawConfig as { crons?: unknown }).crons)
-  ) {
-    configCrons.push(...((rawConfig as { crons: CronEntry[] }).crons));
-  }
+  const configCrons = extractConfigCrons(rawConfig);
 
   if (configCrons.length === 0) {
     log(`No crons array in config.json for "${agentName}" — writing empty crons.json + marker`);
@@ -461,10 +602,13 @@ export function migrateAllAgents(
         const result = migrateCronsForAgent(name, configPath, ctxRoot, { ...options, log });
         results.push(result);
       } catch (err) {
-        log(
-          `ERROR: unexpected failure migrating "${name}": ${err instanceof Error ? err.message : String(err)}`,
-        );
-        results.push({ agentName: name, status: 'no-config' });
+        // A genuine failure (e.g. addCron lock/FS/ENOSPC that left a cron missing).
+        // Do NOT classify it as 'no-config' — that under-reports a write failure as a
+        // benign skip and lets the all-agents CLI exit clean. Record it as 'failed' and
+        // keep processing the other agents; the CLI surfaces failures and exits non-zero.
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`ERROR: unexpected failure migrating "${name}": ${msg}`);
+        results.push({ agentName: name, status: 'failed', error: msg });
       }
     }
   }
