@@ -145,15 +145,23 @@ describe('checkUsageApi — Keychain fallback precedence', () => {
     expect(mockExec).toHaveBeenCalledOnce();
   });
 
-  it('throws the existing clear no-token error when the Keychain entry is missing', async () => {
+  it('throws a clear no-token error (Keychain-aware on macOS) when the Keychain entry is missing', async () => {
     mockExec.mockImplementation(() => { throw new Error('security: SecKeychainSearchCopyNext: not found'); });
     await expect(checkUsageApi(tmpDir, { force: true }))
-      .rejects.toThrow('No OAuth token available (no accounts.json and CLAUDE_CODE_OAUTH_TOKEN not set)');
+      .rejects.toThrow('No OAuth token available (no accounts.json, CLAUDE_CODE_OAUTH_TOKEN not set, and no Claude Code Keychain token)');
   });
 
-  it('throws the existing clear no-token error when the Keychain blob is malformed', async () => {
+  it('throws a clear no-token error (Keychain-aware on macOS) when the Keychain blob is malformed', async () => {
     mockExec.mockReturnValue('not a json blob');
     await expect(checkUsageApi(tmpDir, { force: true }))
-      .rejects.toThrow('No OAuth token available (no accounts.json and CLAUDE_CODE_OAUTH_TOKEN not set)');
+      .rejects.toThrow('No OAuth token available (no accounts.json, CLAUDE_CODE_OAUTH_TOKEN not set, and no Claude Code Keychain token)');
+  });
+
+  it('off macOS, keeps the EXACT legacy no-token error and never attempts the Keychain', async () => {
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    mockExec.mockReturnValue(KC_BLOB('tok_keychain')); // would be used if (wrongly) consulted
+    await expect(checkUsageApi(tmpDir, { force: true }))
+      .rejects.toThrow(/^No OAuth token available \(no accounts\.json and CLAUDE_CODE_OAUTH_TOKEN not set\)$/);
+    expect(mockExec).not.toHaveBeenCalled();
   });
 });

@@ -256,7 +256,16 @@ export async function checkUsageApi(
         accessToken = readKeychainOAuthToken();
         accountName = 'keychain';
       }
-      if (!accessToken) throw new Error('No OAuth token available (no accounts.json and CLAUDE_CODE_OAUTH_TOKEN not set)');
+      if (!accessToken) {
+        // macOS additionally tries the Keychain, so name that attempt there to
+        // avoid mis-diagnosis. Off macOS the Keychain is never tried — keep the
+        // exact legacy no-token error byte-for-byte unchanged.
+        throw new Error(
+          process.platform === 'darwin'
+            ? 'No OAuth token available (no accounts.json, CLAUDE_CODE_OAUTH_TOKEN not set, and no Claude Code Keychain token)'
+            : 'No OAuth token available (no accounts.json and CLAUDE_CODE_OAUTH_TOKEN not set)',
+        );
+      }
     }
   }
 
