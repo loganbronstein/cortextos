@@ -1,7 +1,7 @@
 import { createServer, Server, Socket } from 'net';
 import { existsSync, unlinkSync, chmodSync, readFileSync } from 'fs';
 import { join, resolve as pathResolve } from 'path';
-import type { IPCRequest, IPCResponse, CronSummaryRow, CronDefinition } from '../types/index.js';
+import type { IPCRequest, IPCResponse, CronSummaryRow, CronDefinition, RestartIntent } from '../types/index.js';
 import { AgentManager } from './agent-manager.js';
 import { getIpcPath } from '../utils/paths.js';
 import { readCrons, getExecutionLog, getExecutionLogPage, addCron, updateCron, removeCron, getCronByName } from '../bus/crons.js';
@@ -634,9 +634,16 @@ export class IPCServer {
         case 'restart-agent':
           if (!request.agent) {
             response = { success: false, error: 'Agent name required', code: 'INVALID_INPUT' };
+          } else if (request.intent !== undefined && request.intent !== 'preserve' && request.intent !== 'fresh' && request.intent !== 'auto') {
+            // BUG-011: validate the restart intent at the IPC trust boundary.
+            // IPC JSON is runtime-untyped — reject any unknown value with NO dispatch.
+            console.log(`[ipc] restart-agent ${request.agent}: invalid intent "${String(request.intent)}"`);
+            response = { success: false, error: `Invalid restart intent: ${String(request.intent)}`, code: 'INVALID_INPUT' };
           } else {
+            // Missing intent defaults to 'preserve' (back-compat for old clients).
+            const intent: RestartIntent = request.intent ?? 'preserve';
             const insp = this.agentManager.inspectAgentOp('restart', request.agent);
-            this.agentManager.restartAgent(request.agent)
+            this.agentManager.restartAgent(request.agent, intent)
               .catch(err => console.error(`Failed to restart ${request.agent}:`, err));
             if (insp.ok) {
               response = { success: true, data: `Restarting ${request.agent}` };

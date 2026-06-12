@@ -122,7 +122,10 @@ describe('AgentProcess codex-app-server runtime', () => {
 
   it('wires Telegram handle to CodexAppServerPTY before start', async () => {
     const ap = new AgentProcess('codex-app-agent', mockEnv, { runtime: 'codex-app-server' });
-    const api = { sendChatAction: vi.fn().mockResolvedValue(undefined) };
+    // sendMessage is required by maybeSendCodexBootNotification(); without it the
+    // boot notification threw and was previously swallowed by start()'s catch.
+    // After BUG-011 made start() rethrow spawn/start failures, the mock must be complete.
+    const api = { sendChatAction: vi.fn().mockResolvedValue(undefined), sendMessage: vi.fn().mockResolvedValue(undefined) };
 
     ap.setTelegramHandle(api as any, '12345');
     await ap.start();

@@ -14,10 +14,15 @@ vi.mock('../../../src/daemon/agent-process.js', () => ({
       this.name = name;
       this.dir = dir;
     }
-    async start() { /* no-op */ }
-    async stop() { /* no-op */ }
+    async start() { return 'started'; }
+    async stop() { return 'stopped'; }
     getStatus() { return { name: this.name, status: 'stopped' }; }
     onExit() { /* no-op */ }
+    onLifecycleWithhold() { /* no-op */ }
+    readQuarantineRecord() { return { kind: 'absent' }; }
+    isLifecycleWithheld() { return false; }
+    isQuarantined() { return false; }
+    async forceReap() { return 'gone'; }
   },
 }));
 
@@ -261,13 +266,15 @@ describe('AgentManager.restartAgent - BUG-007 fix (rebuild Telegram poller)', ()
     // actually running the full startAgent flow
     (am as any).agents.set('alice', { process: {}, checker: {}, poller: { stop() {} } });
 
-    const stopSpy = vi.spyOn(am, 'stopAgent').mockResolvedValue();
+    const stopSpy = vi.spyOn(am, 'stopAgent').mockResolvedValue('stopped');
     const startSpy = vi.spyOn(am, 'startAgent').mockResolvedValue();
 
     await am.restartAgent('alice');
 
     expect(stopSpy).toHaveBeenCalledWith('alice');
-    expect(startSpy).toHaveBeenCalledWith('alice', '');
+    // BUG-011: restartAgent threads a RestartIntent to startAgent (defaults to
+    // 'auto' when called directly — the IPC handler supplies preserve/fresh).
+    expect(startSpy).toHaveBeenCalledWith('alice', '', undefined, undefined, 'auto');
     // Verify call order: stop must complete before start, so the old poller
     // is fully torn down before the new one is constructed
     const stopOrder = stopSpy.mock.invocationCallOrder[0];
@@ -277,7 +284,7 @@ describe('AgentManager.restartAgent - BUG-007 fix (rebuild Telegram poller)', ()
 
   it('is a no-op when the agent does not exist', async () => {
     const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
-    const stopSpy = vi.spyOn(am, 'stopAgent').mockResolvedValue();
+    const stopSpy = vi.spyOn(am, 'stopAgent').mockResolvedValue('stopped');
     const startSpy = vi.spyOn(am, 'startAgent').mockResolvedValue();
 
     await am.restartAgent('nonexistent');
@@ -394,7 +401,7 @@ describe('AgentManager.reloadCrons - silent-success bug fix (iter 7)', () => {
   it('lazy-creates scheduler when non-Hermes agent has no scheduler wired', () => {
     // Simulate the start-window gap: agent registered, no scheduler yet.
     const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
-    const fakeProcess = { config: { runtime: undefined } } as any;
+    const fakeProcess = { config: { runtime: undefined }, isLifecycleWithheld: () => false } as any;
     (am as any).agents.set('alice', { process: fakeProcess, checker: {} });
 
     expect((am as any).cronSchedulers.has('alice')).toBe(false);
@@ -412,7 +419,7 @@ describe('AgentManager.reloadCrons - silent-success bug fix (iter 7)', () => {
 
   it('returns true without creating a scheduler for Hermes agents (no-op preserved)', () => {
     const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
-    const fakeProcess = { config: { runtime: 'hermes' } } as any;
+    const fakeProcess = { config: { runtime: 'hermes' }, isLifecycleWithheld: () => false } as any;
     (am as any).agents.set('alice', { process: fakeProcess, checker: {} });
 
     const result = am.reloadCrons('alice');
@@ -423,7 +430,7 @@ describe('AgentManager.reloadCrons - silent-success bug fix (iter 7)', () => {
 
   it('reuses existing scheduler when one is already wired', () => {
     const am = new AgentManager('test-instance', ctxRoot, frameworkRoot, 'acme');
-    const fakeProcess = { config: { runtime: undefined } } as any;
+    const fakeProcess = { config: { runtime: undefined }, isLifecycleWithheld: () => false } as any;
     (am as any).agents.set('alice', { process: fakeProcess, checker: {} });
 
     // Pre-wire a scheduler with a spy on reload()

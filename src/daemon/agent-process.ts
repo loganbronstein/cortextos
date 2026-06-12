@@ -1,18 +1,63 @@
 import { appendFileSync, existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'fs';
 import { join, sep } from 'path';
 import { homedir } from 'os';
-import type { AgentConfig, AgentStatus, CtxEnv } from '../types/index.js';
+import { execFileSync } from 'child_process';
+import type { AgentConfig, AgentStatus, CtxEnv, RestartIntent } from '../types/index.js';
 import { AgentPTY } from '../pty/agent-pty.js';
 import { CodexAppServerPTY } from '../pty/codex-app-server-pty.js';
 import { HermesPTY, hermesDbExists } from '../pty/hermes-pty.js';
 import { MessageDedup, injectMessage } from '../pty/inject.js';
 import type { TelegramAPI } from '../telegram/api.js';
-import { ensureDir } from '../utils/atomic.js';
+import { ensureDir, atomicWriteSync } from '../utils/atomic.js';
 import { writeCortextosEnv } from '../utils/env.js';
 import { getOverdueReminders } from '../bus/reminders.js';
 import { resolvePaths } from '../utils/paths.js';
+import { logEvent } from '../bus/event.js';
 
 type LogFn = (msg: string) => void;
+
+/**
+ * BUG-011 (quarantine contract v8): typed start()/stop() outcomes so
+ * AgentManager branches on the return value, never on status text.
+ *   StartOutcome: 'started' (healthy live child) | 'quarantined' (degraded LIVE
+ *                 child, owned, services withheld) | 'withheld' (no live child
+ *                 right now — the PTY exited during spawn and handleExit owns the
+ *                 classification; registry retained, services withheld, recover
+ *                 via explicit restart). A throw = clean rollback (no child to orphan).
+ *   StopOutcome:  'stopped' (reaped/gone) | 'unreapable' (live child could not be
+ *                 OS-proven dead; retain ownership, fail closed).
+ */
+export type StartOutcome = 'started' | 'quarantined' | 'withheld';
+export type StopOutcome = 'stopped' | 'unreapable';
+
+/** BUG-011: OS-level liveness of a pid. Death is proven ONLY by 'dead' (ESRCH). */
+export type PidLiveness = 'dead' | 'alive' | 'unknown';
+
+/** BUG-011: lifecycle-withhold reason (the general guard covers both). */
+export type LifecycleWithholdReason = 'quarantined' | 'stopped-but-owned' | 'quarantine-exited';
+
+/** BUG-011: the in-flight identity captured when a child is quarantined. */
+interface QuarantineIdentity {
+  pid: number | null;
+  procStart: string | null; // raw OS process-start token (env-independent capture)
+  bootId: string | null;
+}
+
+export interface QuarantineRecord {
+  agent: string;
+  pid: number;
+  proc_start: string;
+  boot_id: string;
+  quarantined_at: string;
+  reason: string;
+}
+
+export type QuarantineRecordRead =
+  | { kind: 'absent' }
+  | { kind: 'invalid' }
+  | { kind: 'valid'; record: QuarantineRecord };
+
+export type QuarantineRecordAssessment = 'clear' | 'adopt' | 'unknown';
 
 /**
  * Manages a single agent's lifecycle.
@@ -57,6 +102,8 @@ export class AgentProcess {
   // crash recovery for an agent we just stopped intentionally.
   private exitPromise: Promise<void> | null = null;
   private resolveExit: (() => void) | null = null;
+  /** BUG-011: in-flight marker-supersede receipt to delete after a successful spawn. */
+  private supersedeReceiptToClean: string | null = null;
   private dedup: MessageDedup;
   private log: LogFn;
   private onStatusChange: ((status: AgentStatus) => void) | null = null;
@@ -69,6 +116,29 @@ export class AgentProcess {
   // daemon should fire the codex-app-server back-online Telegram directly
   // (skipped on handoff restart — the agent sends its own contextual reply).
   private lastSpawnWasHandoff = false;
+  // BUG-011 quarantine contract v8 — lifecycle-withhold state machine.
+  // `established` flips true on the FIRST successful spawn. It distinguishes the
+  // INITIAL AgentManager.startAgent lifecycle (a rejection there is a clean
+  // transactional rollback owned by AM) from a DIRECT sessionRefresh/handleExit
+  // restart of an already-registered agent (a rejection there must withhold the
+  // pre-existing services before it escapes — the manager-bypass fix).
+  private established = false;
+  // QUARANTINED: a degraded but LIVE child the daemon owns but cannot serve.
+  private quarantined = false;
+  // STOPPED-BUT-OWNED: an established agent whose direct restart cleanly rejected
+  // (no live child) — registry retained, services withheld, recover via restart.
+  private stoppedButOwned = false;
+  // false ⇒ UNDURABLE quarantine (the .quarantine.json identity could not be
+  // persisted; in-memory ownership only; does not survive an uncatchable kill).
+  private quarantineDurable = true;
+  // Best-effort identity of the quarantined child (for getStatus + reap + record).
+  private quarantineIdentity: QuarantineIdentity | null = null;
+  // Reason carried into the lifecycle-withhold transition (telemetry/observability).
+  private lifecycleWithholdReason: LifecycleWithholdReason | null = null;
+  // AM-registered callback fired SYNCHRONOUSLY on any established-lifecycle
+  // transition into a withheld state (quarantine or stopped-but-owned). AM tears
+  // down scheduler/checker/pollers idempotently. Null until AM wires it.
+  private onLifecycleWithholdCb: ((name: string, reason: LifecycleWithholdReason) => void) | null = null;
 
   constructor(name: string, env: CtxEnv, config: AgentConfig, log?: LogFn) {
     this.name = name;
@@ -87,124 +157,190 @@ export class AgentProcess {
 
   /**
    * Start the agent. Spawns Claude Code in a PTY.
+   *
+   * BUG-011: `intent` controls history preservation. Defaults to 'auto' so cold
+   * starts / crash recovery / daemon discovery keep the legacy resumability
+   * behavior. IPC-triggered restarts pass an explicit intent (see RestartIntent).
    */
-  async start(): Promise<void> {
+  async start(intent: RestartIntent = 'auto'): Promise<StartOutcome> {
     if (this.status === 'running') {
       this.log('Already running');
-      return;
+      return 'started';
     }
 
-    // Apply startup delay
-    const delay = this.config.startup_delay || 0;
-    if (delay > 0) {
-      this.log(`Startup delay: ${delay}s`);
-      await sleep(delay * 1000);
+    // BUG-011 PIN 2: a non-running attached PTY is ownership evidence. Only
+    // OS-ESRCH permits detaching the stale handle before a new spawn proceeds.
+    // BUG-011 blocker-2 fix: an attached alive/unknown PTY is a live owned child
+    // and MUST be quarantined BEFORE any mutating mode resolution. resolveStartMode
+    // consumes .force-fresh and writes/deletes the supersede receipt — running it
+    // first would destroy restart-intent/journal state for an owned child even
+    // though no replacement spawn happens. So we quarantine here, before
+    // resolveStartMode, using only a non-mutating diagnostic.
+    let attachedPid: number | null = null;
+    if (this.pty) {
+      attachedPid = this.safeGetPtyPid();
+      const attachedLiveness = this.probePid(attachedPid);
+      if (attachedLiveness === 'dead') {
+        this.log(`Detached stale PTY handle for OS-dead pid ${attachedPid}`);
+        this.pty = null;
+        this.exitPromise = null;
+        this.resolveExit = null;
+        this.lifecycleGeneration++;
+      } else {
+        // alive | unknown — quarantine the live owned child WITHOUT touching any
+        // start artifact (no resolveStartMode, no marker/receipt mutation).
+        return this.enterQuarantine(
+          new Error(`Refusing to spawn ${this.name}: a non-running attached PTY is ${attachedLiveness}; quarantining the owned child`),
+          attachedPid,
+        );
+      }
     }
 
-    // Write .cortextos-env for backward compat (D6)
-    if (this.env.agentDir) {
-      writeCortextosEnv(this.env.agentDir, this.env);
+    let mode: 'continue' | 'fresh';
+    let prompt: string;
+    try {
+      const delay = this.config.startup_delay || 0;
+      if (delay > 0) {
+        this.log(`Startup delay: ${delay}s`);
+        await sleep(delay * 1000);
+      }
+
+      if (this.env.agentDir) {
+        writeCortextosEnv(this.env.agentDir, this.env);
+      }
+
+      mode = this.resolveStartMode(intent);
+      prompt = mode === 'fresh'
+        ? this.buildStartupPrompt()
+        : this.buildContinuePrompt();
+    } catch (err) {
+      return this.rejectOrWithhold(err);
     }
 
-    // Determine start mode
-    const mode = this.shouldContinue() ? 'continue' : 'fresh';
-    const prompt = mode === 'fresh'
-      ? this.buildStartupPrompt()
-      : this.buildContinuePrompt();
-
-    this.log(`Starting in ${mode} mode`);
+    this.log(`Starting in ${mode} mode (intent: ${intent})`);
     this.status = 'starting';
-
-    // BUG-040 fix: clear any stale stop request from a previous lifecycle
-    // (e.g. if the previous stop() timed out before the PTY actually exited).
-    // We're starting fresh — the new PTY has no pending stop.
     this.stopRequested = false;
-    // BUG-040 fix: bump generation. The onExit closure below captures THIS
-    // value and uses it to detect "I'm an old PTY whose exit fired after a
-    // new lifecycle began" — in which case it bails out without touching
-    // handleExit, preventing spurious crash recovery on the new agent.
     const myGeneration = ++this.lifecycleGeneration;
 
-    // Create PTY — runtime-specific subclass handles binary, args, bootstrap detection
-    const logPath = join(this.env.ctxRoot, 'logs', this.name, 'stdout.log');
-    ensureDir(join(this.env.ctxRoot, 'logs', this.name));
-    this.log(`Log path: ${logPath}`);
-    this.pty = this.config.runtime === 'hermes'
-      ? new HermesPTY(this.env, this.config, logPath)
-      : this.config.runtime === 'codex-app-server'
-        ? new CodexAppServerPTY(this.env, this.config, logPath)
-        : new AgentPTY(this.env, this.config, logPath);
+    try {
+      const logPath = join(this.env.ctxRoot, 'logs', this.name, 'stdout.log');
+      ensureDir(join(this.env.ctxRoot, 'logs', this.name));
+      this.log(`Log path: ${logPath}`);
+      this.pty = this.config.runtime === 'hermes'
+        ? new HermesPTY(this.env, this.config, logPath)
+        : this.config.runtime === 'codex-app-server'
+          ? new CodexAppServerPTY(this.env, this.config, logPath)
+          : new AgentPTY(this.env, this.config, logPath);
 
-    // Issue #330: re-wire the Telegram handle on every start() (session refresh
-    // creates a fresh CodexAppServerPTY). Only CodexAppServerPTY uses this — Claude / Hermes
-    // typing indicators flow through fast-checker.
-    if (this.config.runtime === 'codex-app-server' && this.telegramApi && this.telegramChatId) {
-      (this.pty as CodexAppServerPTY).setTelegramHandle(this.telegramApi, this.telegramChatId);
-    }
-
-    // BUG-011 fix: create a fresh exit signal for this run. resolveExit is
-    // called from the onExit handler below; stop() awaits exitPromise to
-    // guarantee the exit handler has fired before clearing stopping.
-    this.exitPromise = new Promise<void>((resolve) => {
-      this.resolveExit = resolve;
-    });
-
-    // Handle exit
-    this.pty.onExit((exitCode, signal) => {
-      // BUG-040 fix: if the lifecycle has moved on (a new start() incremented
-      // the generation since this PTY was spawned), this is an old PTY's late
-      // exit. Ignore it entirely — we don't want it to trigger handleExit on
-      // the current PTY's state.
-      if (myGeneration !== this.lifecycleGeneration) {
-        this.log(`Ignoring late exit from previous lifecycle gen ${myGeneration} (current: ${this.lifecycleGeneration})`);
-        return;
+      if (this.config.runtime === 'codex-app-server' && this.telegramApi && this.telegramChatId) {
+        (this.pty as CodexAppServerPTY).setTelegramHandle(this.telegramApi, this.telegramChatId);
       }
-      this.log(`Exited with code ${exitCode} signal ${signal}`);
-      this.handleExit(exitCode);
-      // Signal anyone awaiting this PTY's exit (e.g. stop() — BUG-011 fix)
-      this.resolveExit?.();
-      this.resolveExit = null;
-    });
+
+      this.exitPromise = new Promise<void>((resolve) => {
+        this.resolveExit = resolve;
+      });
+
+      this.pty.onExit((exitCode, signal) => {
+        if (myGeneration !== this.lifecycleGeneration) {
+          this.log(`Ignoring late exit from previous lifecycle gen ${myGeneration} (current: ${this.lifecycleGeneration})`);
+          return;
+        }
+        this.log(`Exited with code ${exitCode} signal ${signal}`);
+        this.handleExit(exitCode);
+        this.resolveExit?.();
+        this.resolveExit = null;
+      });
+    } catch (err) {
+      return this.rejectOrWithhold(err);
+    }
 
     try {
       await this.pty.spawn(mode, prompt);
-      // Codex exec-per-turn race: the new PTY's onExit can fire BEFORE this
-      // line if `codex exec` completes its prompt quickly (CodexAppServerPTY's spawn
-      // resolves once exec is launched, but the process may exit moments
-      // later as it finishes the bootstrap turn). handleExit() nulls
-      // this.pty and schedules crash recovery — we must not claim 'running'
-      // or call getPid() on null in that window.
-      if (!this.pty) {
-        this.log('PTY exited during spawn — handleExit will recover');
-        return;
-      }
-      this.status = 'running';
-      this.sessionStart = new Date();
-      this.log(`Running (pid: ${this.pty.getPid()})`);
-
-      // Issue #392: codex-app-server does not reliably execute the inline
-      // "Send a Telegram message saying you are back online" instruction the
-      // way claude-code does, so fire the back-online ping directly from the
-      // daemon for that runtime. Skipped on handoff restart — the agent
-      // sends its own contextual "back — ..." reply in that case.
-      this.maybeSendCodexBootNotification();
-
-      // Start session timer
-      this.startSessionTimer();
-
-      this.notifyStatusChange();
     } catch (err) {
       this.log(`Failed to start: ${err}`);
-      this.status = 'crashed';
-      this.notifyStatusChange();
+      const observedPid = this.safeGetPtyPid();
+      if (observedPid !== null) {
+        const liveness = await this.reapRejectedSpawn(observedPid);
+        if (liveness === 'dead') {
+          this.status = 'crashed';
+          this.safeNotifyStatusChange();
+          return this.rejectOrWithhold(err);
+        }
+      }
+      return this.enterQuarantine(err, observedPid);
     }
+
+    // BUG-011 blocker-1 fix: the PTY exited DURING spawn (handleExit fired in the
+    // onExit handler, nulled this.pty, and set status crashed/halted/stopped — and
+    // may have scheduled a recovery setTimeout). There is NO live child. We must
+    // NOT claim 'started', must NOT set established=true, and must NOT wire
+    // services against no child; and we must NOT throw (a throw would let
+    // AgentManager roll the registry back while handleExit's scheduled recovery
+    // still references this AgentProcess => an unregistered process). Instead:
+    // retain the registry, withhold services, leave handleExit's status intact
+    // (truthful), and return 'withheld'. The scheduled recovery setTimeout is
+    // already neutralized by the `!isLifecycleWithheld()` guard it checks at fire
+    // time (see handleExit), so it can never create a process; recovery is via an
+    // explicit restartAgent (which re-wires services through AM). fireLifecycle-
+    // Withhold tears down any pre-existing services for an ESTABLISHED lifecycle
+    // and is a null-safe no-op for the initial lifecycle (AM has not wired yet).
+    if (!this.pty) {
+      this.log(`PTY exited during spawn — no live child; withholding services (status=${this.status}), registry retained, recover via restart`);
+      this.fireLifecycleWithhold('stopped-but-owned');
+      this.safeNotifyStatusChange();
+      return 'withheld';
+    }
+
+    // A confirmed live running PTY establishes the lifecycle. Any later DIRECT
+    // start rejection (sessionRefresh/handleExit) must withhold services before it
+    // escapes (rejectOrWithhold). A successful (re)start clears any prior withhold.
+    this.established = true;
+    this.quarantined = false;
+    this.stoppedButOwned = false;
+    this.lifecycleWithholdReason = null;
+    // BUG-011 exit-fix iter-2: clean the authoritative in-flight supersede receipt
+    // ONLY after a CONFIRMED-LIVE spawn. An exit-during-spawn (the `withheld`
+    // terminal above) is NOT a successful spawn — it leaves the receipt byte-for-byte
+    // intact so an explicit restart can recognize the interrupted-start journal and
+    // clean it only once the replacement PTY is confirmed live.
+    this.cleanupSupersedeReceipt();
+    this.status = 'running';
+    this.sessionStart = new Date();
+    try {
+      this.log(`Running (pid: ${this.pty.getPid()})`);
+    } catch (err) {
+      this.log(`Running (pid unavailable: ${err})`);
+    }
+
+    try {
+      this.maybeSendCodexBootNotification();
+    } catch (err) {
+      this.log(`WARNING: post-spawn boot notification failed (non-fatal; agent is live): ${err}`);
+    }
+
+    try {
+      this.startSessionTimer();
+    } catch (err) {
+      this.log(`WARNING: post-spawn session timer setup failed (non-fatal; agent is live): ${err}`);
+    }
+
+    try {
+      this.notifyStatusChange();
+    } catch (err) {
+      this.log(`WARNING: post-spawn status notification failed (non-fatal; agent is live): ${err}`);
+    }
+    return 'started';
   }
 
   /**
    * Stop the agent gracefully.
    */
-  async stop(): Promise<void> {
-    if (this.stopping) return;
+  async stop(): Promise<StopOutcome> {
+    if (this.quarantined) {
+      const outcome = await this.forceReap();
+      return outcome === 'unreapable' ? 'unreapable' : 'stopped';
+    }
+    if (this.stopping) return this.isLifecycleWithheld() ? 'unreapable' : 'stopped';
     this.stopping = true;
     // BUG-040 fix: stopRequested persists ACROSS stop()'s return until
     // handleExit clears it. This is the safety net for the case where the
@@ -285,20 +421,23 @@ export class AgentProcess {
     this.status = 'stopped';
     this.notifyStatusChange();
     this.log('Stopped');
+    return 'stopped';
   }
 
   /**
-   * Restart with --continue (session refresh).
+   * Restart in place (session refresh).
    *
    * Delegates to stop() + start() so it inherits the BUG-011 race fix
    * automatically. This also eliminates a separate bug in the previous
    * inline implementation where the OLD pty's exit handler could fire
    * AFTER the NEW pty was set up, nulling out the wrong reference.
-   * `start()` will pick up `continue` mode automatically because the
-   * conversation directory still has .jsonl files (shouldContinue() is true).
+   *
+   * BUG-011: `intent` defaults to 'preserve' (the ordinary max-session-timer
+   * rollover MUST keep the conversation even if a stale .force-fresh exists).
+   * FastChecker's forced context restart passes 'fresh'.
    */
-  async sessionRefresh(): Promise<void> {
-    this.log('Session refresh (--continue restart)');
+  async sessionRefresh(intent: RestartIntent = 'preserve'): Promise<void> {
+    this.log(`Session refresh (intent: ${intent})`);
     // Write .session-refresh marker so the SessionEnd crash-alert hook
     // (src/hooks/hook-crash-alert.ts) classifies the imminent PTY exit as a
     // session refresh rather than a crash. The hook's marker handler +
@@ -317,7 +456,7 @@ export class AgentProcess {
       this.log(`Failed to write .session-refresh marker: ${err}`);
     }
     await this.stop();
-    await this.start();
+    await this.start(intent);
     this.log('Session refreshed');
   }
 
@@ -363,17 +502,131 @@ export class AgentProcess {
    * Get current agent status.
    */
   getStatus(): AgentStatus {
+    let pid: number | null = null;
+    try {
+      pid = this.pty?.getPid() ?? null;
+    } catch {
+      pid = null;
+    }
+    if (pid === null) pid = this.quarantineIdentity?.pid ?? null;
+
     return {
       name: this.name,
       status: this.status,
-      pid: this.pty?.getPid() || undefined,
+      pid: pid ?? undefined,
       uptime: this.sessionStart
         ? Math.floor((Date.now() - this.sessionStart.getTime()) / 1000)
         : undefined,
       sessionStart: this.sessionStart?.toISOString(),
       crashCount: this.crashCount,
       model: this.config.model,
+      quarantineDurable: this.quarantined ? this.quarantineDurable : undefined,
     };
+  }
+
+  isQuarantined(): boolean {
+    return this.quarantined;
+  }
+
+  isLifecycleWithheld(): boolean {
+    return this.quarantined || this.stoppedButOwned;
+  }
+
+  onLifecycleWithhold(cb: (name: string, reason: LifecycleWithholdReason) => void): void {
+    this.onLifecycleWithholdCb = cb;
+  }
+
+  getQuarantineRecordPath(): string {
+    return join(this.env.ctxRoot, 'state', this.name, '.quarantine.json');
+  }
+
+  readQuarantineRecord(): QuarantineRecordRead {
+    const recordPath = this.getQuarantineRecordPath();
+    if (!existsSync(recordPath)) return { kind: 'absent' };
+    try {
+      const parsed = JSON.parse(readFileSync(recordPath, 'utf-8'));
+      if (!this.isValidQuarantineRecord(parsed)) return { kind: 'invalid' };
+      return { kind: 'valid', record: parsed };
+    } catch {
+      return { kind: 'invalid' };
+    }
+  }
+
+  assessQuarantineRecord(record: QuarantineRecord): QuarantineRecordAssessment {
+    const liveness = this.probePid(record.pid);
+    if (liveness === 'dead') return 'clear';
+
+    const bootId = this.captureBootId();
+    if (bootId === null) return 'unknown';
+    if (bootId !== record.boot_id) return 'clear';
+    if (liveness === 'unknown') return 'unknown';
+
+    const procStart = this.captureProcStart(record.pid);
+    if (procStart === null) return 'unknown';
+    return procStart === record.proc_start ? 'adopt' : 'clear';
+  }
+
+  adoptQuarantineRecord(record: QuarantineRecord): void {
+    this.pty = null;
+    this.quarantineIdentity = {
+      pid: record.pid,
+      procStart: record.proc_start,
+      bootId: record.boot_id,
+    };
+    this.quarantineDurable = true;
+    this.quarantined = true;
+    this.stoppedButOwned = false;
+    this.established = true;
+    this.status = 'quarantined';
+    this.fireLifecycleWithhold('quarantined');
+    this.safeNotifyStatusChange();
+    this.emitLifecycleEvent('agent_quarantined', 'critical', {
+      reason: record.reason,
+      adopted: true,
+      pid: record.pid,
+      quarantine_durable: true,
+    });
+    this.log(`CRITICAL: adopted record-backed quarantine for pid ${record.pid}; services withheld until explicit restart`);
+  }
+
+  clearQuarantineRecordForReplacement(): boolean {
+    if (!this.deleteQuarantineRecord('cold-start cleanup')) return false;
+    this.clearQuarantineState();
+    return true;
+  }
+
+  async forceReap(): Promise<'reaped' | 'unreapable' | 'gone'> {
+    const identity = this.quarantineIdentity;
+    if (!identity || identity.pid === null || identity.procStart === null || identity.bootId === null) {
+      return this.failReap('identity missing or incomplete');
+    }
+
+    const liveness = this.probePid(identity.pid);
+    if (liveness === 'dead') return this.finishReap('gone', 'pid is OS-proven dead');
+
+    const currentBootId = this.captureBootId();
+    if (currentBootId === null) return this.failReap('boot identity unavailable');
+    if (currentBootId !== identity.bootId) return this.finishReap('gone', 'boot identity changed');
+    if (liveness === 'unknown') return this.failReap('pid liveness unknown');
+
+    const currentProcStart = this.captureProcStart(identity.pid);
+    if (currentProcStart === null) return this.failReap('process start identity unavailable');
+    if (currentProcStart !== identity.procStart) return this.finishReap('gone', 'process start identity changed');
+
+    try {
+      if (this.pty) (this.pty as { kill(signal?: string): void }).kill('SIGKILL');
+      else process.kill(identity.pid, 'SIGKILL');
+    } catch (err) {
+      this.log(`SIGKILL dispatch for quarantined pid ${identity.pid} threw: ${err}`);
+    }
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (this.probePid(identity.pid) === 'dead') {
+        return this.finishReap('reaped', 'SIGKILL followed by OS-ESRCH');
+      }
+      if (attempt < 4) await sleep(100);
+    }
+    return this.failReap('pid remained alive or unknown after bounded SIGKILL verification');
   }
 
   /**
@@ -428,6 +681,268 @@ export class AgentProcess {
   }
 
   // --- Private methods ---
+
+  private safeGetPtyPid(): number | null {
+    try {
+      const pid = this.pty?.getPid();
+      return typeof pid === 'number' && Number.isInteger(pid) && pid > 0 ? pid : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private probePid(pid: number | null | undefined): PidLiveness {
+    if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) return 'unknown';
+    try {
+      process.kill(pid, 0);
+      return 'alive';
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code === 'ESRCH') return 'dead';
+      if (code === 'EPERM') return 'alive';
+      return 'unknown';
+    }
+  }
+
+  private identityPlatform(): NodeJS.Platform {
+    return process.platform;
+  }
+
+  private runIdentityCommand(command: string, args: string[], env?: NodeJS.ProcessEnv): string {
+    return execFileSync(command, args, { encoding: 'utf-8', ...(env ? { env } : {}) });
+  }
+
+  private captureProcStart(pid: number): string | null {
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    try {
+      if (this.identityPlatform() === 'linux') {
+        return this.parseLinuxProcStat(readFileSync(`/proc/${pid}/stat`, 'utf-8'));
+      }
+      if (this.identityPlatform() === 'darwin') {
+        const token = this.runIdentityCommand('ps', ['-p', String(pid), '-o', 'lstart='], { ...process.env, TZ: 'UTC', LC_ALL: 'C' }).trim();
+        return token || null;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  private parseLinuxProcStat(stat: string): string | null {
+    const trimmed = stat.trim();
+    const close = trimmed.lastIndexOf(')');
+    if (close < 0 || !/^\d+\s+\(/.test(trimmed.slice(0, close + 1))) return null;
+    const remainder = trimmed.slice(close + 1).trim();
+    if (!remainder) return null;
+    const fields = remainder.split(/\s+/);
+    const starttime = fields[19];
+    return starttime && /^\d+$/.test(starttime) ? starttime : null;
+  }
+
+  private captureBootId(): string | null {
+    try {
+      if (this.identityPlatform() === 'linux') {
+        const line = readFileSync('/proc/stat', 'utf-8')
+          .split(/\r?\n/)
+          .find(candidate => /^btime\s+/.test(candidate));
+        const match = line?.match(/^btime\s+(\d+)\s*$/);
+        return match?.[1] ?? null;
+      }
+      if (this.identityPlatform() === 'darwin') {
+        const token = this.runIdentityCommand('sysctl', ['-n', 'kern.boottime']).trim();
+        return token || null;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  private async reapRejectedSpawn(pid: number): Promise<PidLiveness> {
+    let liveness: PidLiveness = 'unknown';
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        (this.pty as { kill(signal?: string): void } | null)?.kill('SIGKILL');
+      } catch (err) {
+        this.log(`Rejected-spawn SIGKILL attempt ${attempt + 1} failed: ${err}`);
+      }
+      liveness = this.probePid(pid);
+      if (liveness === 'dead') return 'dead';
+      if (attempt < 4) await sleep(100);
+    }
+    return liveness;
+  }
+
+  // BUG-011 PIN 1: this is the single post-proof rejection terminal used by
+  // start(). Initial lifecycle rejection remains transactional; every
+  // established clean rejection withholds services before escaping.
+  private rejectOrWithhold(err: unknown): never {
+    this.pty = null;
+    this.exitPromise = null;
+    this.resolveExit = null;
+    if (this.established) {
+      this.stoppedButOwned = true;
+      this.status = 'stopped';
+      this.fireLifecycleWithhold('stopped-but-owned', err);
+      this.safeNotifyStatusChange();
+    }
+    throw err;
+  }
+
+  private enterQuarantine(err: unknown, observedPid: number | null): StartOutcome {
+    this.quarantined = true;
+    this.stoppedButOwned = false;
+    this.status = 'quarantined';
+    const pid = observedPid ?? this.safeGetPtyPid();
+    this.quarantineIdentity = {
+      pid,
+      procStart: pid === null ? null : this.captureProcStart(pid),
+      bootId: this.captureBootId(),
+    };
+    this.fireLifecycleWithhold('quarantined', err);
+
+    const reason = this.quarantineReason(err);
+    this.quarantineDurable = this.writeQuarantineRecord(reason);
+    if (!this.quarantineDurable) {
+      // Achievable invariant: failed persistence cannot provide crash-durable
+      // ownership. We retain truthful in-memory ownership and best-effort reap
+      // on graceful shutdown; an uncatchable daemon loss may still orphan it.
+      this.emitLifecycleEvent('quarantine_undurable', 'critical', { reason, pid });
+      this.log(`CRITICAL: UNDURABLE quarantine for ${this.name} pid=${pid ?? 'unknown'}; ownership will not survive an uncatchable daemon exit`);
+    }
+    this.emitLifecycleEvent('agent_quarantined', 'critical', {
+      reason,
+      pid,
+      quarantine_durable: this.quarantineDurable,
+    });
+    this.safeNotifyStatusChange();
+    this.log(`CRITICAL: agent quarantined; services withheld (pid=${pid ?? 'unknown'}, durable=${this.quarantineDurable})`);
+    return 'quarantined';
+  }
+
+  private fireLifecycleWithhold(reason: LifecycleWithholdReason, err?: unknown): void {
+    if (reason === 'quarantined') this.quarantined = true;
+    if (reason === 'stopped-but-owned' || reason === 'quarantine-exited') this.stoppedButOwned = true;
+    this.lifecycleWithholdReason = reason;
+    const error = err instanceof Error ? err.message : err === undefined ? undefined : String(err);
+    this.emitLifecycleEvent('lifecycle_withheld', 'critical', { reason, error });
+    this.log(`CRITICAL: lifecycle withheld for ${this.name} (reason=${reason}${error ? `, error=${error}` : ''})`);
+    try {
+      this.onLifecycleWithholdCb?.(this.name, reason);
+    } catch (callbackErr) {
+      this.log(`CRITICAL: lifecycle-withhold callback failed: ${callbackErr}`);
+      this.emitLifecycleEvent('lifecycle_withhold_callback_failed', 'critical', { reason, error: String(callbackErr) });
+    }
+  }
+
+  private quarantineReason(err: unknown): string {
+    const raw = err instanceof Error ? err.message : String(err ?? 'unknown quarantine reason');
+    return raw.slice(0, 500) || 'unknown quarantine reason';
+  }
+
+  private writeQuarantineRecord(reason: string): boolean {
+    const identity = this.quarantineIdentity;
+    if (!identity || identity.pid === null || identity.procStart === null || identity.bootId === null) return false;
+    const record: QuarantineRecord = {
+      agent: this.name,
+      pid: identity.pid,
+      proc_start: identity.procStart,
+      boot_id: identity.bootId,
+      quarantined_at: new Date().toISOString(),
+      reason,
+    };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        this.writeAtomicQuarantineRecord(this.getQuarantineRecordPath(), JSON.stringify(record));
+        return true;
+      } catch (err) {
+        this.log(`Quarantine record write attempt ${attempt + 1}/3 failed: ${err}`);
+      }
+    }
+    return false;
+  }
+
+  private writeAtomicQuarantineRecord(path: string, data: string): void {
+    atomicWriteSync(path, data);
+  }
+
+  private deleteQuarantineRecord(context: string): boolean {
+    const recordPath = this.getQuarantineRecordPath();
+    if (!existsSync(recordPath)) return true;
+    try {
+      unlinkSync(recordPath);
+    } catch (err) {
+      this.log(`CRITICAL: quarantine record delete failed during ${context}: ${err}`);
+    }
+    if (!existsSync(recordPath)) return true;
+    this.emitLifecycleEvent('quarantine_record_delete_failed', 'critical', { context, path: recordPath });
+    this.log(`CRITICAL: quarantine record remains after ${context}; refusing cleared/replacement claim`);
+    return false;
+  }
+
+  private isValidQuarantineRecord(value: unknown): value is QuarantineRecord {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+    const record = value as Record<string, unknown>;
+    const expected = ['agent', 'pid', 'proc_start', 'boot_id', 'quarantined_at', 'reason'];
+    const keys = Object.keys(record);
+    if (keys.length !== expected.length || !expected.every(key => Object.prototype.hasOwnProperty.call(record, key))) return false;
+    return record.agent === this.name
+      && typeof record.pid === 'number' && Number.isInteger(record.pid) && record.pid > 0
+      && typeof record.proc_start === 'string' && record.proc_start.length > 0
+      && typeof record.boot_id === 'string' && record.boot_id.length > 0
+      && typeof record.quarantined_at === 'string' && !Number.isNaN(Date.parse(record.quarantined_at))
+      && typeof record.reason === 'string' && record.reason.length > 0;
+  }
+
+  private clearQuarantineState(): void {
+    this.pty = null;
+    this.quarantined = false;
+    this.stoppedButOwned = false;
+    this.quarantineDurable = true;
+    this.quarantineIdentity = null;
+    this.lifecycleWithholdReason = null;
+    this.status = 'stopped';
+    this.sessionStart = null;
+    this.clearSessionTimer();
+    this.safeNotifyStatusChange();
+  }
+
+  private finishReap(outcome: 'reaped' | 'gone', reason: string): 'reaped' | 'gone' | 'unreapable' {
+    if (!this.deleteQuarantineRecord(`forceReap ${outcome}`)) {
+      return this.failReap(`${reason}; stale quarantine record could not be deleted`);
+    }
+    this.clearQuarantineState();
+    this.emitLifecycleEvent('agent_reaped', 'warning', { outcome, reason });
+    this.log(`Quarantined child ${outcome}: ${reason}`);
+    return outcome;
+  }
+
+  private failReap(reason: string): 'unreapable' {
+    this.quarantined = true;
+    this.stoppedButOwned = false;
+    this.status = 'quarantined';
+    this.emitLifecycleEvent('agent_reap_failed', 'critical', { reason, pid: this.quarantineIdentity?.pid ?? null });
+    this.safeNotifyStatusChange();
+    this.log(`CRITICAL: quarantined child unreapable: ${reason}`);
+    return 'unreapable';
+  }
+
+  private emitLifecycleEvent(event: string, severity: 'warning' | 'critical', metadata: Record<string, unknown>): void {
+    try {
+      const paths = resolvePaths(this.name, this.env.instanceId, this.env.org);
+      logEvent(paths, this.name, this.env.org, 'action', event, severity, metadata);
+    } catch (err) {
+      this.log(`CRITICAL: failed to emit ${event} event: ${err}`);
+    }
+  }
+
+  private safeNotifyStatusChange(): void {
+    try {
+      this.notifyStatusChange();
+    } catch (err) {
+      this.log(`Status notification failed (non-fatal): ${err}`);
+    }
+  }
 
   /**
    * Read the tail of this agent's stdout.log without loading the whole file.
@@ -506,6 +1021,29 @@ export class AgentProcess {
     this.pty = null;
     this.clearSessionTimer();
 
+    // A tracked exit is the only automatic transition out of live quarantine.
+    // The record is cleared only after this exit, and a failed delete remains
+    // fail-closed so cold start cannot silently spawn beside a stale record.
+    if (this.quarantined) {
+      if (!this.deleteQuarantineRecord('tracked quarantined exit')) {
+        this.status = 'quarantined';
+        this.safeNotifyStatusChange();
+        return;
+      }
+      this.quarantined = false;
+      this.quarantineDurable = true;
+      this.quarantineIdentity = null;
+      this.stoppedButOwned = true;
+      this.status = 'stopped';
+      this.fireLifecycleWithhold('quarantine-exited');
+      this.safeNotifyStatusChange();
+      return;
+    }
+
+    // General lifecycle-withhold guard: never auto-restart an owned-but-not-
+    // serving lifecycle. Explicit restartAgent recovery is the only exit.
+    if (this.stoppedButOwned) return;
+
     // When the cortextos daemon is shut down by PM2, SIGTERM propagates to
     // the whole process group and reaches each PTY's Claude Code child
     // BEFORE the daemon's stopAll() loop has a chance to call stopAgent() on
@@ -576,7 +1114,7 @@ export class AgentProcess {
       this.status = 'crashed';
       this.notifyStatusChange();
       setTimeout(() => {
-        if (this.status === 'crashed') {
+        if (this.status === 'crashed' && !this.isLifecycleWithheld()) {
           this.start().catch(err => this.log(`Image-poison restart failed: ${err}`));
         }
       }, 5000);
@@ -632,28 +1170,21 @@ export class AgentProcess {
     this.notifyStatusChange();
 
     setTimeout(() => {
-      if (this.status === 'crashed') {
+      if (this.status === 'crashed' && !this.isLifecycleWithheld()) {
         this.start().catch(err => this.log(`Restart failed: ${err}`));
       }
     }, backoff);
   }
 
-  private shouldContinue(): boolean {
+  /**
+   * BUG-011: pure resumability check — does a resumable conversation/session
+   * exist? Does NOT read or consume the .force-fresh marker, so callers can
+   * decide how the marker interacts with the restart intent.
+   */
+  private hasResumableSession(): boolean {
     // Hermes: session continuity is determined by whether the SQLite DB exists.
-    // HERMES_HOME env var overrides the default ~/.hermes path.
     if (this.config.runtime === 'hermes') {
-      const hermesHome = process.env['HERMES_HOME'];
-      return hermesDbExists(hermesHome);
-    }
-
-    // Check for force-fresh marker (all runtimes honor it).
-    const forceFreshPath = join(this.env.ctxRoot, 'state', this.name, '.force-fresh');
-    if (existsSync(forceFreshPath)) {
-      try {
-        const { unlinkSync } = require('fs');
-        unlinkSync(forceFreshPath);
-      } catch { /* ignore */ }
-      return false;
+      return hermesDbExists(process.env['HERMES_HOME']);
     }
 
     // codex-app-server: session continuity is tracked by the adapter's own
@@ -692,6 +1223,237 @@ export class AgentProcess {
       return files.some((f: string) => f.endsWith('.jsonl'));
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * BUG-011: consume the global .force-fresh marker. Tri-state so start() can
+   * FAIL CLOSED: 'absent' (no marker), 'consumed' (present and removal verified),
+   * or 'delete-failed' (present but still on disk after the unlink attempt — a
+   * throw or a silent no-op). A lingering marker would force an unexpected fresh
+   * start later, so 'delete-failed' must never be treated as consumed.
+   */
+  private consumeForceFresh(): 'absent' | 'consumed' | 'delete-failed' {
+    const forceFreshPath = join(this.env.ctxRoot, 'state', this.name, '.force-fresh');
+    if (!existsSync(forceFreshPath)) return 'absent';
+    try { unlinkSync(forceFreshPath); } catch { /* fall through to the removal re-check */ }
+    // A concurrent consumer removing it also counts as consumed.
+    return existsSync(forceFreshPath) ? 'delete-failed' : 'consumed';
+  }
+
+  /**
+   * BUG-011 conflict signal: a 'preserve' restart kept a resumable session while
+   * a conflicting .force-fresh marker was present (now superseded). Emit exactly
+   * one durable restarts.log line + one bus event so history-preservation can
+   * never be silently overridden on the next crash. No paths/credentials.
+   */
+  private failClosedMarkerError(intent: RestartIntent): Error {
+    const msg = `Refusing to start ${this.name}: a .force-fresh marker is present but could NOT be removed (intent=${intent}). Left on disk for operator recovery to prevent a silent forced-fresh on a later start.`;
+    this.log(msg);
+    return new Error(msg);
+  }
+
+  /** Peek the global .force-fresh marker WITHOUT consuming it. */
+  private forceFreshExists(): boolean {
+    return existsSync(join(this.env.ctxRoot, 'state', this.name, '.force-fresh'));
+  }
+
+  /** Authoritative in-flight supersede transaction journal (NOT a permanent audit record). */
+  private supersedeReceiptPath(): string {
+    return join(this.env.ctxRoot, 'state', this.name, '.restart-marker-superseded.json');
+  }
+
+  /**
+   * BUG-011: resolve the start mode (continue|fresh) with the authoritative
+   * in-flight supersede receipt inspected + validated FIRST, before intent /
+   * resumability. A VALID receipt is an authorization to supersede the marker —
+   * never proof a session is still resumable. May throw to FAIL CLOSED before the
+   * PTY spawn. All marker/receipt deletions are verified/fail-closed.
+   */
+  private resolveStartMode(intent: RestartIntent): 'continue' | 'fresh' {
+    const receiptPath = this.supersedeReceiptPath();
+
+    if (existsSync(receiptPath)) {
+      // An existing receipt is an in-flight journal: it MUST validate for THIS
+      // agent or EVERY intent fails closed (no overwrite, no marker touch).
+      if (!this.isValidSupersedeReceipt(receiptPath)) {
+        const msg = `Refusing to start ${this.name}: an invalid or foreign .restart-marker-superseded.json receipt is present (intent=${intent}). Not overwriting or authorizing; aborting before spawn for operator review.`;
+        this.log(msg);
+        throw new Error(msg);
+      }
+      // Valid in-flight preserve->continue authorization.
+      if (intent === 'fresh') {
+        // EXPLICIT CANCELLATION (verified, pre-spawn, in order): remove+verify the
+        // marker, then delete+verify the receipt. Either failure aborts before
+        // spawn; the interrupted state stays safely retryable.
+        if (this.forceFreshExists() && this.consumeForceFresh() === 'delete-failed') {
+          throw this.failClosedMarkerError('fresh');
+        }
+        if (this.deleteReceipt(receiptPath) === 'delete-failed') {
+          const msg = `Refusing to start ${this.name}: fresh cancellation removed the marker but could NOT delete the supersede receipt. Left for retry; aborting before spawn.`;
+          this.log(msg);
+          throw new Error(msg);
+        }
+        // Telemetry only AFTER both deletions are verified — never on a partial.
+        this.emitCancellationTelemetry();
+        this.log('fresh intent CANCELLED an in-flight preserve supersede — marker + receipt discarded');
+        return 'fresh';
+      }
+      // auto / preserve: RECOVER the in-flight continue, but ONLY if resumable.
+      if (this.hasResumableSession()) {
+        if (this.forceFreshExists() && this.consumeForceFresh() === 'delete-failed') {
+          throw this.failClosedMarkerError(intent);
+        }
+        this.supersedeReceiptToClean = receiptPath; // best-effort cleanup after spawn
+        this.log(`recovered an in-flight preserve supersede (intent=${intent}) — continuing (history preserved)`);
+        return 'continue';
+      }
+      const msg = `Refusing to start ${this.name}: a valid in-flight supersede receipt is present but there is no resumable session (intent=${intent}). A receipt authorizes superseding the marker, not that a session remains; aborting before spawn for operator review.`;
+      this.log(msg);
+      throw new Error(msg);
+    }
+
+    // No receipt — normal per-intent flow.
+    if (intent === 'fresh') {
+      if (this.consumeForceFresh() === 'delete-failed') throw this.failClosedMarkerError('fresh');
+      return 'fresh';
+    }
+    if (intent === 'auto') {
+      // Legacy: a .force-fresh forces fresh (all runtimes — durable auto/cold
+      // fallback), else continue if a resumable session exists.
+      const m = this.consumeForceFresh();
+      if (m === 'delete-failed') throw this.failClosedMarkerError('auto');
+      return m === 'consumed' ? 'fresh' : (this.hasResumableSession() ? 'continue' : 'fresh');
+    }
+    // preserve.
+    if (this.hasResumableSession()) {
+      this.authorizeMarkerSupersede(); // new conflict: write receipt BEFORE removal (if marker present)
+      return 'continue';
+    }
+    if (this.consumeForceFresh() === 'delete-failed') throw this.failClosedMarkerError('preserve');
+    this.log('preserve intent: no resumable session — starting fresh (not history loss)');
+    return 'fresh';
+  }
+
+  /**
+   * BUG-011: NEW-CONFLICT authorization (no existing receipt, preserve + resumable).
+   * If a .force-fresh marker is present, write the authoritative receipt FIRST, then
+   * remove+verify the marker. Either failure throws (fail-closed). No marker => no-op.
+   * restarts.log + bus event are best-effort projections, not correctness gates.
+   */
+  private authorizeMarkerSupersede(): void {
+    if (!this.forceFreshExists()) return; // no marker => no conflict
+    const receiptPath = this.supersedeReceiptPath();
+    try {
+      atomicWriteSync(receiptPath, JSON.stringify({
+        agent: this.name,
+        intent: 'preserve',
+        decision: 'continue',
+        marker_conflict: 'superseded',
+        timestamp: new Date().toISOString(),
+      }));
+    } catch (err) {
+      const msg = `Refusing to start ${this.name}: could not persist the marker-supersede receipt (${err}). .force-fresh left in place; aborting before spawn.`;
+      this.log(msg);
+      throw new Error(msg);
+    }
+    if (this.consumeForceFresh() === 'delete-failed') {
+      const msg = `Refusing to start ${this.name}: marker-supersede receipt written but .force-fresh could not be removed. Receipt left for recovery; aborting before spawn.`;
+      this.log(msg);
+      throw new Error(msg);
+    }
+    this.log('preserve intent superseded a conflicting .force-fresh marker — continuing (history preserved, receipt recorded)');
+    this.emitSupersedeTelemetry();
+    this.supersedeReceiptToClean = receiptPath; // best-effort cleanup after spawn
+  }
+
+  /** Delete the supersede receipt with VERIFIED removal (tri-state, like consumeForceFresh). */
+  private deleteReceipt(receiptPath: string): 'absent' | 'deleted' | 'delete-failed' {
+    if (!existsSync(receiptPath)) return 'absent';
+    try { unlinkSync(receiptPath); } catch { /* fall through to the removal re-check */ }
+    return existsSync(receiptPath) ? 'delete-failed' : 'deleted';
+  }
+
+  /** Best-effort projection of a fresh CANCELLATION — distinct from ordinary fresh; never a gate. */
+  private emitCancellationTelemetry(): void {
+    try {
+      const paths = resolvePaths(this.name, this.env.instanceId, this.env.org);
+      const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+      appendFileSync(
+        join(paths.logDir, 'restarts.log'),
+        `[${ts}] FRESH-CANCEL: intent=fresh decision=fresh marker_conflict=cancelled\n`,
+        'utf-8',
+      );
+    } catch (err) {
+      this.log(`(telemetry) restarts.log cancel projection failed (non-fatal): ${err}`);
+    }
+    try {
+      const paths = resolvePaths(this.name, this.env.instanceId, this.env.org);
+      logEvent(paths, this.name, this.env.org, 'action', 'restart_supersede_cancelled', 'warning', {
+        intent: 'fresh',
+        decision: 'fresh',
+        marker_conflict: 'cancelled',
+      });
+    } catch (err) {
+      this.log(`(telemetry) restart_supersede_cancelled event projection failed (non-fatal): ${err}`);
+    }
+  }
+
+  /** Validate the supersede receipt is a well-formed journal for THIS agent (exact schema). */
+  private isValidSupersedeReceipt(receiptPath: string): boolean {
+    try {
+      const r = JSON.parse(readFileSync(receiptPath, 'utf-8'));
+      // Plain object only (reject arrays / non-objects), with EXACTLY the 5
+      // expected own enumerable keys — no missing, no extra/unknown fields.
+      if (typeof r !== 'object' || r === null || Array.isArray(r)) return false;
+      const expected = ['agent', 'intent', 'decision', 'marker_conflict', 'timestamp'];
+      const keys = Object.keys(r);
+      if (keys.length !== expected.length || !expected.every(k => Object.prototype.hasOwnProperty.call(r, k))) return false;
+      return r.agent === this.name
+        && r.intent === 'preserve'
+        && r.decision === 'continue'
+        && r.marker_conflict === 'superseded'
+        && typeof r.timestamp === 'string'
+        && !Number.isNaN(Date.parse(r.timestamp));
+    } catch {
+      return false; // unreadable / malformed JSON
+    }
+  }
+
+  /** Best-effort audit projections of a supersede — NOT correctness gates (never throw). */
+  private emitSupersedeTelemetry(): void {
+    try {
+      const paths = resolvePaths(this.name, this.env.instanceId, this.env.org);
+      const ts = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+      appendFileSync(
+        join(paths.logDir, 'restarts.log'),
+        `[${ts}] PRESERVE-CONTINUE: intent=preserve decision=continue marker_conflict=superseded\n`,
+        'utf-8',
+      );
+    } catch (err) {
+      this.log(`(telemetry) restarts.log supersede projection failed (non-fatal): ${err}`);
+    }
+    try {
+      const paths = resolvePaths(this.name, this.env.instanceId, this.env.org);
+      logEvent(paths, this.name, this.env.org, 'action', 'restart_marker_superseded', 'warning', {
+        intent: 'preserve',
+        decision: 'continue',
+        marker_conflict: 'superseded',
+      });
+    } catch (err) {
+      this.log(`(telemetry) restart_marker_superseded event projection failed (non-fatal): ${err}`);
+    }
+  }
+
+  /** Best-effort cleanup of the in-flight receipt AFTER a successful spawn (cannot unspawn). */
+  private cleanupSupersedeReceipt(): void {
+    if (!this.supersedeReceiptToClean) return;
+    const p = this.supersedeReceiptToClean;
+    this.supersedeReceiptToClean = null;
+    try {
+      if (existsSync(p)) unlinkSync(p);
+    } catch (err) {
+      this.log(`WARNING: failed to clean up the marker-supersede receipt after spawn (${err}). It is a valid leftover; the next start will validate, recognize, and clean it.`);
     }
   }
 
@@ -860,6 +1622,7 @@ export class AgentProcess {
         }
 
         this.log(`Session timer fired after ${Math.round(elapsedMs / 1000)}s (limit: ${currentMaxMs / 1000}s)`);
+        if (this.isLifecycleWithheld()) return;
         this.sessionRefresh().catch(err => this.log(`Session refresh failed: ${err}`));
       }, Math.min(delayMs, MAX_SETTIMEOUT_MS));
     };

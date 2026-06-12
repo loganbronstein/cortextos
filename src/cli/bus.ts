@@ -616,7 +616,7 @@ busCommand
     const ipc = new IPCClient(env.instanceId);
     const daemonRunning = await ipc.isDaemonRunning();
     if (daemonRunning) {
-      const resp = await ipc.send({ type: 'restart-agent', agent: env.agentName, source: 'cortextos bus self-restart' });
+      const resp = await ipc.send({ type: 'restart-agent', agent: env.agentName, intent: 'preserve', source: 'cortextos bus self-restart' });
       if (resp.success) {
         console.log(`Restarting ${env.agentName} via daemon IPC`);
       } else {
@@ -649,7 +649,7 @@ busCommand
     const ipc = new IPCClient(env.instanceId);
     const daemonRunning = await ipc.isDaemonRunning();
     if (daemonRunning) {
-      const resp = await ipc.send({ type: 'restart-agent', agent: env.agentName, source: 'cortextos bus hard-restart' });
+      const resp = await ipc.send({ type: 'restart-agent', agent: env.agentName, intent: 'fresh', source: 'cortextos bus hard-restart' });
       if (resp.success) {
         console.log(`Hard restart triggered for ${env.agentName} — fresh session incoming`);
       } else {
@@ -1605,7 +1605,7 @@ busCommand
     const daemonRunning = await ipc.isDaemonRunning();
 
     if (daemonRunning) {
-      const resp = await ipc.send({ type: 'restart-agent', agent: targetAgent, source: 'cortextos bus soft-restart' });
+      const resp = await ipc.send({ type: 'restart-agent', agent: targetAgent, intent: 'preserve', source: 'cortextos bus soft-restart' });
       if (resp.success) {
         console.log(`Restarted ${targetAgent} via daemon IPC`);
       } else {
@@ -1670,7 +1670,7 @@ busCommand
       writeFileSync(join(stateDir, '.user-restart'), opts.reason);
 
       // Send IPC restart signal
-      const resp = await ipc.send({ type: 'restart-agent', agent, source: 'cortextos bus soft-restart-all' });
+      const resp = await ipc.send({ type: 'restart-agent', agent, intent: 'preserve', source: 'cortextos bus soft-restart-all' });
       if (resp.success) {
         console.log(`[${i + 1}/${targets.length}] Restarted ${agent}`);
       } else {

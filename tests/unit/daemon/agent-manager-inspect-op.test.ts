@@ -12,10 +12,15 @@ vi.mock('../../../src/daemon/agent-process.js', () => ({
     name: string;
     dir: string;
     constructor(name: string, dir: string) { this.name = name; this.dir = dir; }
-    async start() { /* no-op */ }
-    async stop() { /* no-op */ }
+    async start() { return 'started'; }
+    async stop() { return 'stopped'; }
     getStatus() { return { name: this.name, status: 'stopped' }; }
     onExit() { /* no-op */ }
+    onLifecycleWithhold() { /* no-op */ }
+    readQuarantineRecord() { return { kind: 'absent' }; }
+    isLifecycleWithheld() { return false; }
+    isQuarantined() { return false; }
+    async forceReap() { return 'gone'; }
   },
 }));
 vi.mock('../../../src/daemon/fast-checker.js', () => ({

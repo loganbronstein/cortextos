@@ -737,10 +737,29 @@ export interface FleetHealthResponse {
   };
 }
 
+/**
+ * BUG-011: explicit restart history-preservation intent, threaded from the
+ * restart caller through the daemon to AgentProcess.start().
+ *  - 'preserve' — keep the conversation/session if one is resumable, even if a
+ *    foreign/stale `.force-fresh` marker exists (it is superseded with a loud
+ *    durable signal); only goes fresh when there is no resumable session.
+ *  - 'fresh'    — always a fresh session; consumes any `.force-fresh` marker.
+ *  - 'auto'     — legacy resumability behavior (a `.force-fresh` forces fresh,
+ *    else continue if resumable). Used for cold/crash/daemon-discovery starts.
+ */
+export type RestartIntent = 'preserve' | 'fresh' | 'auto';
+
 export interface IPCRequest {
   type: IPCCommandType;
   agent?: string;
   data?: Record<string, unknown>;
+  /**
+   * BUG-011: restart history-preservation intent for `restart-agent`. Validated
+   * at the IPC trust boundary (only 'preserve' | 'fresh' | 'auto' accepted; an
+   * invalid supplied value is rejected with INVALID_INPUT and no dispatch). A
+   * missing value defaults to 'preserve' for backward compatibility.
+   */
+  intent?: RestartIntent;
   /**
    * BUG-015: human-readable identifier of the caller (e.g. 'cortextos enable',
    * 'cortextos bus soft-restart-all'). Logged by the daemon on every incoming
@@ -794,11 +813,21 @@ export interface AgentInfo {
 
 export interface AgentStatus {
   name: string;
-  status: 'running' | 'stopped' | 'crashed' | 'starting' | 'halted';
+  // BUG-011: 'quarantined' = a degraded-but-LIVE child that AgentProcess could
+  // neither cleanly start nor OS-prove dead; the daemon retains ownership but
+  // withholds all services (see AgentProcess quarantine). 'stopped-but-owned'
+  // reuses the existing 'stopped' value + the quarantineDurable/lifecycle-withheld
+  // signals rather than adding a third state value.
+  status: 'running' | 'stopped' | 'crashed' | 'starting' | 'halted' | 'quarantined';
   pid?: number;
   uptime?: number; // seconds
   lastHeartbeat?: string;
   sessionStart?: string;
   crashCount?: number;
   model?: string;
+  // BUG-011: present only while status==='quarantined'. false = UNDURABLE
+  // (the .quarantine.json identity record could not be persisted, so ownership
+  // is in-memory only and does NOT survive an uncatchable daemon kill); true =
+  // record persisted (crash-durable across daemon restart via cold-start adoption).
+  quarantineDurable?: boolean;
 }

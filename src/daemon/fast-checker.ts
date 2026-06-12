@@ -1165,9 +1165,10 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
       writeFileSync(statusPath, JSON.stringify({ used_percentage: 0, exceeds_200k_tokens: false, written_at: new Date().toISOString() }));
     } catch { /* non-fatal */ }
 
-    // sessionRefresh() does stop() + start(); shouldContinue() will return false
-    // because .force-fresh was just written, giving us a clean fresh session.
-    this.agent.sessionRefresh().catch(err => this.log(`Context restart failed: ${err}`));
+    // sessionRefresh('fresh') does stop() + start('fresh') for an explicit clean
+    // session (BUG-011). The .force-fresh marker written above remains the durable
+    // fallback for an auto/cold start if the daemon exits before this completes.
+    this.agent.sessionRefresh('fresh').catch(err => this.log(`Context restart failed: ${err}`));
   }
 
   /**

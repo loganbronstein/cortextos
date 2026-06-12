@@ -1,11 +1,13 @@
 import { Command } from 'commander';
+import { writeFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 import { IPCClient } from '../daemon/ipc-server.js';
-import { writeStopMarker } from './stop.js';
 
 export const restartCommand = new Command('restart')
   .argument('<agent>', 'Agent name to restart')
   .option('--instance <id>', 'Instance ID', 'default')
-  .description('Restart a running agent (stop + start). Re-reads config.json and .env, respawns the PTY. Does NOT restart the daemon process itself — use `pm2 restart cortextos-daemon` for that.')
+  .description('Restart a running agent atomically (re-reads config.json and .env, respawns the PTY, preserving the conversation). Does NOT restart the daemon process itself — use `pm2 restart cortextos-daemon` for that.')
   .action(async (agent: string, options: { instance: string }) => {
     const ipc = new IPCClient(options.instance);
     const daemonRunning = await ipc.isDaemonRunning();
@@ -17,26 +19,25 @@ export const restartCommand = new Command('restart')
 
     console.log(`Restarting agent: ${agent}`);
 
-    // Stop phase mirrors `cortextos stop <agent>` — write the .user-stop marker
-    // before the IPC stop so the SessionEnd crash-alert hook does not fire a
-    // false 🚨 CRASH alarm during the brief stop window. (BUG-036 pattern.)
-    writeStopMarker(options.instance, agent, 'stopped via cortextos restart');
-    const stopResponse = await ipc.send({ type: 'stop-agent', agent, source: 'cortextos restart' });
-    if (!stopResponse.success) {
-      console.error(`  Stop failed: ${stopResponse.error}`);
-      process.exit(1);
+    // BUG-011 fix: a SINGLE atomic restart-agent IPC (not stop+start). The old
+    // stop+start pair raced the daemon's auto-respawn and tripped the DEDUPED
+    // guard, leaving the agent stopped. Write the .user-restart marker first so
+    // the SessionEnd crash-alert hook classifies the imminent PTY exit as a
+    // planned restart, not a 🚨 crash (BUG-036). intent=preserve keeps the
+    // conversation (a stale/foreign .force-fresh is superseded, not honored).
+    const stateDir = join(homedir(), '.cortextos', options.instance, 'state', agent);
+    try {
+      mkdirSync(stateDir, { recursive: true });
+      writeFileSync(join(stateDir, '.user-restart'), 'restarted via cortextos restart\n', 'utf-8');
+    } catch (err) {
+      console.error(`  Warning: failed to write .user-restart marker: ${(err as Error).message}`);
     }
-    console.log(`  ${stopResponse.data}`);
 
-    // Start phase — daemon's start-agent handler re-reads config.json + .env
-    // and spawns a fresh PTY. Same code path as `cortextos start <agent>`
-    // when the daemon is already running, so env reload / config re-read /
-    // PTY respawn semantics match exactly.
-    const startResponse = await ipc.send({ type: 'start-agent', agent, source: 'cortextos restart' });
-    if (!startResponse.success) {
-      console.error(`  Start failed: ${startResponse.error}`);
-      console.error(`  Agent is now stopped. Recover with: cortextos start ${agent}`);
+    const resp = await ipc.send({ type: 'restart-agent', agent, intent: 'preserve', source: 'cortextos restart' });
+    if (!resp.success) {
+      console.error(`  Restart failed: ${resp.error}`);
+      console.error(`  Recover with: cortextos start ${agent}`);
       process.exit(1);
     }
-    console.log(`  ${startResponse.data}`);
+    console.log(`  ${resp.data}`);
   });

@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync } from 'fs';
 import { join, relative } from 'path';
-import type { AgentConfig, AgentStatus, CtxEnv, BusPaths, WorkerStatus, TelegramMessage } from '../types/index.js';
-import { AgentProcess } from './agent-process.js';
+import type { AgentConfig, AgentStatus, CtxEnv, BusPaths, WorkerStatus, TelegramMessage, RestartIntent } from '../types/index.js';
+import { AgentProcess, type LifecycleWithholdReason, type StopOutcome } from './agent-process.js';
 import { WorkerProcess } from './worker-process.js';
 import { FastChecker } from './fast-checker.js';
 import { CronScheduler } from './cron-scheduler.js';
@@ -16,14 +16,24 @@ import { collectTelegramCommands, registerTelegramCommands } from '../bus/metric
 import { stripControlChars } from '../utils/validate.js';
 import { processMediaMessage } from '../telegram/media.js';
 import { stripBom } from '../utils/strip-bom.js';
+import { logEvent } from '../bus/event.js';
 
 type LogFn = (msg: string) => void;
+
+type AgentEntry = {
+  process: AgentProcess;
+  checker: FastChecker;
+  poller?: TelegramPoller;
+  activityPoller?: TelegramPoller;
+  telegramRejectCount?: number;
+  telegramLastRejectAlertAt?: number;
+};
 
 /**
  * Manages all agents in a cortextOS instance.
  */
 export class AgentManager {
-  private agents: Map<string, { process: AgentProcess; checker: FastChecker; poller?: TelegramPoller; activityPoller?: TelegramPoller; telegramRejectCount?: number; telegramLastRejectAlertAt?: number }> = new Map();
+  private agents: Map<string, AgentEntry> = new Map();
   private workers: Map<string, WorkerProcess> = new Map();
   /** Daemon-level cron scheduler registry: one CronScheduler per enabled agent. */
   private cronSchedulers: Map<string, CronScheduler> = new Map();
@@ -243,8 +253,14 @@ export class AgentManager {
     return { ok: true };
   }
 
-  async startAgent(name: string, agentDir: string, config?: AgentConfig, org?: string): Promise<void> {
-    if (this.agents.has(name)) {
+  async startAgent(name: string, agentDir: string, config?: AgentConfig, org?: string, intent: RestartIntent = 'auto'): Promise<void> {
+    const existingEntry = this.agents.get(name);
+    if (existingEntry?.process.isLifecycleWithheld()) {
+      console.error(`[agent-manager] CRITICAL: refusing generic start for lifecycle-withheld agent ${name}; use restart`);
+      this.emitManagerEvent(name, 'lifecycle_withheld_start_refused', 'critical', { intent });
+      return;
+    }
+    if (existingEntry) {
       // BUG-031: this branch was the workaround for the BUG-011 PTY race
       // (restart-all could send stop+start simultaneously, and the new
       // start would arrive while the old stop's PTY exit was still in
@@ -370,6 +386,9 @@ export class AgentManager {
     }
 
     const agentProcess = new AgentProcess(name, env, config, log);
+    agentProcess.onLifecycleWithhold((agentName, reason) => {
+      this.handleLifecycleWithhold(agentName, reason);
+    });
     // Issue #330: pass the Telegram handle into AgentProcess so CodexAppServerPTY
     // can emit sendChatAction directly from the JSONL stream. Has no effect for
     // claude-code / hermes runtimes — those still use fast-checker.
@@ -403,10 +422,52 @@ export class AgentManager {
       });
     }
 
+    const quarantineRecord = agentProcess.readQuarantineRecord();
+    if (quarantineRecord.kind === 'invalid') {
+      console.error(`[agent-manager] CRITICAL: invalid quarantine record for ${name}; refusing spawn and registration`);
+      this.emitManagerEvent(name, 'agent_quarantine_record_invalid', 'critical', {});
+      return;
+    }
+    if (quarantineRecord.kind === 'valid') {
+      const assessment = agentProcess.assessQuarantineRecord(quarantineRecord.record);
+      if (assessment === 'clear') {
+        if (!agentProcess.clearQuarantineRecordForReplacement()) {
+          console.error(`[agent-manager] CRITICAL: stale quarantine record for ${name} could not be cleared; refusing replacement`);
+          this.emitManagerEvent(name, 'quarantine_record_cleanup_failed', 'critical', {});
+          return;
+        }
+      } else {
+        this.agents.set(name, { process: agentProcess, checker });
+        agentProcess.adoptQuarantineRecord(quarantineRecord.record);
+        if (assessment === 'unknown') {
+          this.emitManagerEvent(name, 'quarantine_record_unknown', 'critical', { pid: quarantineRecord.record.pid });
+        }
+        console.error(`[agent-manager] CRITICAL: adopted quarantine record for ${name}; normal spawn and services withheld`);
+        return;
+      }
+    }
+
     this.agents.set(name, { process: agentProcess, checker });
 
-    // Start agent
-    await agentProcess.start();
+    // Transactional initial lifecycle: a proven-clean throw rolls the registry
+    // back. A resolved quarantine is retained and withholds every service.
+    let outcome;
+    try {
+      outcome = await agentProcess.start(intent);
+    } catch (err) {
+      this.agents.delete(name);
+      this.pendingRestarts.delete(name);
+      throw err;
+    }
+    if (outcome === 'quarantined' || outcome === 'withheld') {
+      // BUG-011: 'quarantined' = a degraded LIVE child; 'withheld' = the PTY
+      // exited during spawn (no live child, handleExit owns the status). Both
+      // retain the registry and withhold ALL services. Recovery is via an
+      // explicit restartAgent, which re-wires services through the normal path.
+      console.error(`[agent-manager] CRITICAL: ${name} started ${outcome}; registry retained and all services withheld`);
+      this.emitManagerEvent(name, outcome === 'quarantined' ? 'agent_quarantined' : 'agent_withheld', 'critical', { source: 'startAgent' });
+      return;
+    }
 
     // Subtask 2.2: Auto-migrate crons from config.json → crons.json before
     // starting the scheduler, so the scheduler always has a populated crons.json
@@ -423,9 +484,12 @@ export class AgentManager {
     this.startAgentCronScheduler(name);
 
     // Start fast checker in background
-    checker.start().catch(err => {
-      console.error(`[${name}] Fast checker error:`, err);
-    });
+    if (!agentProcess.isLifecycleWithheld()) {
+      checker.start().catch(err => {
+        if (agentProcess.isLifecycleWithheld()) return;
+        console.error(`[${name}] Fast checker error:`, err);
+      });
+    }
 
     // Register Telegram slash commands at startup (fix for issue #1)
     if (telegramApi && botToken) {
@@ -449,6 +513,7 @@ export class AgentManager {
       const REJECT_ALERT_COOLDOWN_MS = 30 * 60 * 1000;
 
       poller.onMessage((msg) => {
+        if (agentProcess.isLifecycleWithheld()) return;
         // ALLOWED_USER gate: comma-separated list of numeric user IDs.
         // If configured, ignore messages from other users. Always log the
         // rejected user_id + name so operators can discover IDs to whitelist.
@@ -574,6 +639,7 @@ export class AgentManager {
       });
 
       poller.onCallback((query) => {
+        if (agentProcess.isLifecycleWithheld()) return;
         // Route to fast-checker for hook response handling (perm_allow/deny, askopt, etc.)
         // handleCallback writes hook-response files and edits Telegram messages
         checker.handleCallback(query).catch(err => {
@@ -582,6 +648,7 @@ export class AgentManager {
       });
 
       poller.onReaction((reaction) => {
+        if (agentProcess.isLifecycleWithheld()) return;
         // ALLOWED_USER gate: same multi-user rule as message handler.
         if (allowedUserId) {
           const allowedIds = allowedUserId.split(',').map((s) => parseInt(s.trim(), 10));
@@ -649,7 +716,8 @@ export class AgentManager {
         while (true) {
           // Pre-check: agent may have been deleted from registry during
           // a previous sleep window. Skip the start() call entirely.
-          if (!this.agents.has(name)) return;
+          const currentEntry = this.agents.get(name);
+          if (!currentEntry || currentEntry.process.isLifecycleWithheld()) return;
           const runStart = Date.now();
           try {
             await poller.start();
@@ -659,7 +727,8 @@ export class AgentManager {
           }
           const runDuration = Date.now() - runStart;
           if (poller.lastExitReason === 'stopped-externally') return;
-          if (!this.agents.has(name)) return;
+          const currentEntryAfterRun = this.agents.get(name);
+          if (!currentEntryAfterRun || currentEntryAfterRun.process.isLifecycleWithheld()) return;
           // A poll session that ran for >LONG_RUN_RESET_MS proves the
           // Conflict lock is no longer chronic — reset the retry budget.
           if (runDuration > LONG_RUN_RESET_MS) consecutiveConflictStart = null;
@@ -672,7 +741,13 @@ export class AgentManager {
           await new Promise(r => setTimeout(r, 30_000));
         }
       };
+      // Retain the poller before its async wrapper starts so a synchronous
+      // lifecycle-withhold transition can always stop the in-flight poller.
+      const entry = this.agents.get(name);
+      if (entry) entry.poller = poller;
+
       startPrimaryPollerWithRestart().catch(err => {
+        if (agentProcess.isLifecycleWithheld()) return;
         log(`Telegram poller wrapper crashed: ${err}`);
         // Best-effort operator alert via the agent's own bot. The wrapper
         // crashing is rare (the only catchable path is a throw from
@@ -687,10 +762,6 @@ export class AgentManager {
           ).catch(() => { /* swallow alert failure; original log already captured */ });
         }
       });
-
-      // Store poller reference so stopAgent() can clean it up
-      const entry = this.agents.get(name);
-      if (entry) entry.poller = poller;
 
       log('Telegram poller started (with Conflict-restart wrapper)');
 
@@ -722,6 +793,7 @@ export class AgentManager {
     agentDir: string,
     log: LogFn,
   ): Promise<void> {
+    if (this.agents.get(name)?.process.isLifecycleWithheld()) return;
     if (!org) return;
     const orgDir = join(this.frameworkRoot, 'orgs', org);
 
@@ -773,7 +845,7 @@ export class AgentManager {
 
     activityPoller.onCallback((query) => {
       const entry = this.agents.get(name);
-      if (!entry) return;
+      if (!entry || entry.process.isLifecycleWithheld()) return;
       entry.checker.handleActivityCallback(query, activityApi).catch((err) => {
         log(`Activity-channel callback error: ${err}`);
       });
@@ -783,6 +855,7 @@ export class AgentManager {
     // but any inbound chatter (broadcasts, user DMs, etc.) gets logged
     // so operators can see what is flowing. No PTY injection.
     activityPoller.onMessage((msg) => {
+      if (this.agents.get(name)?.process.isLifecycleWithheld()) return;
       const from = stripControlChars(msg.from?.first_name || msg.from?.username || 'Unknown');
       const text = stripControlChars(msg.text || msg.caption || '');
       log(`[activity-channel inbound] from ${from}: ${text.slice(0, 120)}`);
@@ -797,7 +870,8 @@ export class AgentManager {
       const LONG_RUN_RESET_MS = 60_000;
       let consecutiveConflictStart: number | null = null;
       while (true) {
-        if (!this.agents.has(name)) return;
+        const currentEntry = this.agents.get(name);
+        if (!currentEntry || currentEntry.process.isLifecycleWithheld()) return;
         const runStart = Date.now();
         try {
           await activityPoller.start();
@@ -807,7 +881,8 @@ export class AgentManager {
         }
         const runDuration = Date.now() - runStart;
         if (activityPoller.lastExitReason === 'stopped-externally') return;
-        if (!this.agents.has(name)) return;
+        const currentEntryAfterRun = this.agents.get(name);
+        if (!currentEntryAfterRun || currentEntryAfterRun.process.isLifecycleWithheld()) return;
         if (runDuration > LONG_RUN_RESET_MS) consecutiveConflictStart = null;
         if (consecutiveConflictStart === null) consecutiveConflictStart = Date.now();
         if (Date.now() - consecutiveConflictStart > MAX_CONSECUTIVE_CONFLICT_MS) {
@@ -818,44 +893,113 @@ export class AgentManager {
         await new Promise(r => setTimeout(r, 30_000));
       }
     };
-    startActivityPollerWithRestart().catch((err) => {
-      log(`Activity-channel poller wrapper crashed: ${err}`);
-    });
-
+    // Retain before starting the wrapper so lifecycle-withhold can stop an
+    // in-flight activity poller synchronously.
     const entry = this.agents.get(name);
     if (entry) entry.activityPoller = activityPoller;
 
+    startActivityPollerWithRestart().catch((err) => {
+      if (this.agents.get(name)?.process.isLifecycleWithheld()) return;
+      log(`Activity-channel poller wrapper crashed: ${err}`);
+    });
+
     log(`Activity-channel poller started (chat ${activityChatId}, with Conflict-restart wrapper)`);
+  }
+
+  private handleLifecycleWithhold(name: string, reason: LifecycleWithholdReason): void {
+    const entry = this.agents.get(name);
+    if (!entry || !entry.process.isLifecycleWithheld()) return;
+
+    console.error(`[agent-manager] CRITICAL: withholding services for ${name} (reason=${reason})`);
+
+    const scheduler = this.cronSchedulers.get(name);
+    if (scheduler) {
+      try {
+        scheduler.stop();
+      } catch (err) {
+        this.emitWithholdTeardownFailure(name, reason, 'cron-scheduler', err);
+      } finally {
+        this.cronSchedulers.delete(name);
+      }
+    }
+
+    try {
+      entry.checker.stop();
+    } catch (err) {
+      this.emitWithholdTeardownFailure(name, reason, 'fast-checker', err);
+    }
+
+    if (entry.poller) {
+      try {
+        entry.poller.stop();
+      } catch (err) {
+        this.emitWithholdTeardownFailure(name, reason, 'telegram-poller', err);
+      } finally {
+        entry.poller = undefined;
+      }
+    }
+
+    if (entry.activityPoller) {
+      try {
+        entry.activityPoller.stop();
+      } catch (err) {
+        this.emitWithholdTeardownFailure(name, reason, 'activity-poller', err);
+      } finally {
+        entry.activityPoller = undefined;
+      }
+    }
+  }
+
+  private emitWithholdTeardownFailure(name: string, reason: LifecycleWithholdReason, step: string, err: unknown): void {
+    console.error(`[agent-manager] CRITICAL: lifecycle withhold teardown failed for ${name} step=${step}: ${err}`);
+    this.emitManagerEvent(name, 'lifecycle_withhold_teardown_failed', 'critical', {
+      reason,
+      step,
+      error: String(err),
+    });
+  }
+
+  private emitManagerEvent(name: string, event: string, severity: 'warning' | 'critical', metadata: Record<string, unknown>): void {
+    try {
+      const org = this.resolveAgentOrg(name);
+      const paths = resolvePaths(name, this.instanceId, org);
+      logEvent(paths, name, org, 'action', event, severity, metadata);
+    } catch (err) {
+      console.error(`[agent-manager] CRITICAL: failed to emit ${event} for ${name}: ${err}`);
+    }
   }
 
   /**
    * Stop a specific agent.
    */
-  async stopAgent(name: string): Promise<void> {
+  async stopAgent(name: string): Promise<StopOutcome | undefined> {
     const entry = this.agents.get(name);
     if (!entry) {
       console.log(`[agent-manager] Agent ${name} not found`);
-      return;
+      return undefined;
     }
 
     if (entry.poller) entry.poller.stop();
     if (entry.activityPoller) entry.activityPoller.stop();
     entry.checker.stop();
-    await entry.process.stop();
+
+    const outcome = await entry.process.stop();
+    if (outcome === 'unreapable') {
+      this.pendingRestarts.delete(name);
+      this.handleLifecycleWithhold(name, 'quarantined');
+      console.error(`[agent-manager] CRITICAL: ${name} is unreapable; retaining quarantined registry entry`);
+      this.emitManagerEvent(name, 'agent_reap_failed', 'critical', { source: 'stopAgent' });
+      return 'unreapable';
+    }
+
     this.agents.delete(name);
 
-    // Stop and remove the agent's cron scheduler (if one was wired)
     const scheduler = this.cronSchedulers.get(name);
     if (scheduler) {
       scheduler.stop();
       this.cronSchedulers.delete(name);
     }
 
-    // BUG-031: honor any restart that was queued while we were stopping.
-    // After PR #11 (BUG-011 fix) this branch should never fire — see the
-    // matching warning comment in startAgent(). The honor logic is preserved
-    // as a safety net in case BUG-011 regresses; the warn line tells us
-    // immediately if it ever does.
     if (this.pendingRestarts.has(name)) {
       if (this.daemonJustCrashed) {
         console.log(`[agent-manager] pendingRestarts fired for ${name} (post-crash safety net, expected). Honoring queued restart.`);
@@ -868,6 +1012,7 @@ export class AgentManager {
         console.error(`[agent-manager] Queued restart failed for ${name}:`, err),
       );
     }
+    return 'stopped';
   }
 
   /**
@@ -881,14 +1026,19 @@ export class AgentManager {
    * agentDir is auto-discovered by startAgent() from frameworkRoot/orgs/{org}/agents/{name}.
    * Participates in the pendingRestarts race protection used by restart-all.
    */
-  async restartAgent(name: string): Promise<void> {
+  async restartAgent(name: string, intent: RestartIntent = 'auto'): Promise<void> {
     if (!this.agents.has(name)) {
       console.log(`[agent-manager] Agent ${name} not found — cannot restart`);
       return;
     }
     console.log(`[agent-manager] Restarting ${name}`);
-    await this.stopAgent(name);
-    await this.startAgent(name, '');
+    const outcome = await this.stopAgent(name);
+    if (outcome === 'unreapable') {
+      console.error(`[agent-manager] CRITICAL: restart failed closed for unreapable agent ${name}`);
+      return;
+    }
+    if (outcome !== 'stopped') return;
+    await this.startAgent(name, '', undefined, undefined, intent);
     console.log(`[agent-manager] Restart complete for ${name}`);
   }
 
@@ -924,6 +1074,15 @@ export class AgentManager {
 
     for (const name of names) {
       try {
+        const entry = this.agents.get(name);
+        if (entry?.process.isQuarantined()) {
+          const reap = await entry.process.forceReap();
+          if (reap === 'unreapable') {
+            console.error(`[agent-manager] CRITICAL: graceful shutdown leaving unreapable quarantined child for ${name}; daemon will still exit`);
+            this.emitManagerEvent(name, 'agent_reap_failed', 'critical', { source: 'stopAll', shutdown_continues: true });
+            continue;
+          }
+        }
         await this.stopAgent(name);
       } catch (err) {
         console.error(`[agent-manager] Error stopping ${name}:`, err);
@@ -1078,6 +1237,12 @@ export class AgentManager {
    * lazy-wire one so the just-written crons.json is read immediately.
    */
   reloadCrons(agentName: string): boolean {
+    const existingEntry = this.agents.get(agentName);
+    if (existingEntry?.process.isLifecycleWithheld()) {
+      console.error(`[agent-manager] CRITICAL: refusing cron reload for lifecycle-withheld agent ${agentName}`);
+      this.emitManagerEvent(agentName, 'lifecycle_withheld_reload_refused', 'critical', {});
+      return false;
+    }
     const scheduler = this.cronSchedulers.get(agentName);
     if (scheduler) {
       scheduler.reload();
@@ -1124,7 +1289,7 @@ export class AgentManager {
     }
 
     const entry = this.agents.get(agentName);
-    if (!entry) return;
+    if (!entry || entry.process.isLifecycleWithheld()) return;
 
     // Hermes manages its own cron scheduling — don't double-schedule
     if (entry.process['config']?.runtime === 'hermes') {
@@ -1133,6 +1298,7 @@ export class AgentManager {
     }
 
     const onFire = async (cron: CronDefinition): Promise<void> => {
+      if (this.agents.get(agentName)?.process.isLifecycleWithheld()) return;
       const prompt = cron.prompt ?? `[cron] ${cron.name} fired`;
       // Salt with the fire timestamp so MessageDedup (which hashes the last 100
       // injects) does not reject identical cron prompts on subsequent fires.
@@ -1152,6 +1318,7 @@ export class AgentManager {
       logger: (msg) => console.log(`[daemon] ${msg}`),
     });
 
+    if (entry.process.isLifecycleWithheld()) return;
     scheduler.start();
     this.cronSchedulers.set(agentName, scheduler);
 
