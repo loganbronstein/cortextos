@@ -322,11 +322,14 @@ export interface CronDefinition {
    *     The cron fires every N units after its previous fire (or after daemon start
    *     if it has never fired).
    *   - 5-field cron expression: `"0 8 * * *"`, `"0 0,6,12,18 * * *"`, `"0 16 * * 1"`
-   *     Evaluated against the daemon's wall clock (daemon timezone = server timezone).
+   *     Evaluated against the daemon's process-local wall clock. The daemon pins
+   *     its timezone to the org's `context.json` `timezone` at startup
+   *     (see src/utils/timezone.ts), so fixed-hour crons fire at that zone's
+   *     local time — NOT the host/server timezone or the launching shell's TZ.
    *
    * @example "6h"         — every six hours
-   * @example "0 13 * * *" — daily at 13:00 UTC
-   * @example "0 16 * * 1" — every Monday at 16:00 UTC
+   * @example "0 8 * * *"  — daily at 08:00 in the org timezone (e.g. America/Chicago)
+   * @example "0 16 * * 1" — every Monday at 16:00 in the org timezone
    */
   schedule: string;
 

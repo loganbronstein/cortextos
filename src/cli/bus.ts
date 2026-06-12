@@ -16,7 +16,8 @@ import { createApproval, updateApproval } from '../bus/approval.js';
 import { createReminder, listReminders, ackReminder, pruneReminders } from '../bus/reminders.js';
 import { updateCronFire, parseDurationMs, readCronState } from '../bus/cron-state.js';
 import { addCron, removeCron, readCrons, updateCron as updateCronDef, getCronByName, getExecutionLog } from '../bus/crons.js';
-import { nextFireFromCron } from '../daemon/cron-scheduler.js';
+import { nextFireFromCron, nextFireInTimezone } from '../daemon/cron-scheduler.js';
+import { resolveOrgTimezone, findAgentOrgs } from '../utils/timezone.js';
 import { queryKnowledgeBase, ingestKnowledgeBase, ensureKBDirs } from '../bus/knowledge-base.js';
 import { checkUsageApi, refreshOAuthToken, rotateOAuth, loadAccounts, ALERT_5H, ALERT_7D } from '../bus/oauth.js';
 import { resolvePaths } from '../utils/paths.js';
@@ -2035,6 +2036,34 @@ busCommand
       return;
     }
 
+    // Fixed-expression next-fire must be computed in the TARGET agent's org
+    // timezone, NOT the caller's shell/CTX_TIMEZONE (nextFireFromCron is
+    // process-local, so list-crons would otherwise lie by caller — UTC shell
+    // shows 08:07Z for "7 8 * * *" while the daemon, running in the org zone,
+    // fires it at 13:07Z). Resolve the agent's OWN org (reject ambiguity) and
+    // fail clearly BEFORE printing a misleading table. Interval crons need no tz.
+    const hasExprCron = crons.some(c => isNaN(parseDurationMs(c.schedule)));
+    let orgTz: string | null = null;
+    if (hasExprCron) {
+      const orgs = findAgentOrgs(env.frameworkRoot, agent);
+      if (orgs.length === 0) {
+        console.error(`Cannot compute fixed-schedule next-fire: agent "${agent}" not found under any org in ${join(env.frameworkRoot, 'orgs')}.`);
+        process.exitCode = 1;
+        return;
+      }
+      if (orgs.length > 1) {
+        console.error(`Cannot compute fixed-schedule next-fire: agent "${agent}" is ambiguous across orgs [${orgs.join(', ')}]. Resolve the duplicate before inspecting crons.`);
+        process.exitCode = 1;
+        return;
+      }
+      orgTz = resolveOrgTimezone(env.frameworkRoot, orgs[0]);
+      if (!orgTz) {
+        console.error(`Cannot compute fixed-schedule next-fire: org "${orgs[0]}" has no valid "timezone" in ${join(env.frameworkRoot, 'orgs', orgs[0], 'context.json')}. Set a valid IANA zone (e.g. "America/Chicago").`);
+        process.exitCode = 1;
+        return;
+      }
+    }
+
     // Compute next_fire_at for each cron so the table is informative
     const now = Date.now();
     const rows = crons.map(c => {
@@ -2045,7 +2074,8 @@ busCommand
         const refMs = lastFire ? new Date(lastFire).getTime() : now;
         nextFire = fmtTs(new Date(refMs + dms).toISOString());
       } else {
-        const nf = nextFireFromCron(c.schedule, now);
+        // orgTz is guaranteed non-null here (hasExprCron guard above).
+        const nf = orgTz ? nextFireInTimezone(c.schedule, now, orgTz) : nextFireFromCron(c.schedule, now);
         if (!isNaN(nf)) nextFire = fmtTs(new Date(nf).toISOString());
       }
       const promptPreview = c.prompt.length > 60 ? c.prompt.slice(0, 57) + '...' : c.prompt;

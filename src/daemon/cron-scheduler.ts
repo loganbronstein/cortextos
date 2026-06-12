@@ -126,6 +126,32 @@ export function nextFireFromCron(expr: string, fromMs: number): number {
   return NaN; // should never reach here for valid expressions
 }
 
+/**
+ * Compute the next fire of a cron expression as if the process were running in
+ * IANA timezone `tz`, independent of the actual process timezone.
+ *
+ * `nextFireFromCron` interprets the expression in PROCESS-LOCAL wall-clock time.
+ * The daemon runs IN the org timezone (set at startup), so its own calls are
+ * already correct. Out-of-process display surfaces (e.g. `bus list-crons`) run
+ * in whatever shell launched them, so they must pin the org timezone here or the
+ * displayed next-fire varies by caller — a misleading evidence surface.
+ *
+ * Node honours a runtime `process.env.TZ` mutation for subsequent Date calls, so
+ * we set it around the computation and ALWAYS restore in `finally`. Interval
+ * scheduling (parseDurationMs) is pure duration math and is intentionally not
+ * routed through here.
+ */
+export function nextFireInTimezone(expr: string, fromMs: number, tz: string): number {
+  const prev = process.env.TZ;
+  try {
+    process.env.TZ = tz;
+    return nextFireFromCron(expr, fromMs);
+  } finally {
+    if (prev === undefined) delete process.env.TZ;
+    else process.env.TZ = prev;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Internal scheduler state for a single cron
 // ---------------------------------------------------------------------------

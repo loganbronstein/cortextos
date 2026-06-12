@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { fileURLToPath } from 'url';
+import { resolveOrgTimezone } from '../utils/timezone.js';
 
 export const ecosystemCommand = new Command('ecosystem')
   .option('--instance <id>', 'Instance ID', 'default')
@@ -49,6 +50,22 @@ export const ecosystemCommand = new Command('ecosystem')
     const detectedOrg = options.org || agents.find(a => a.org)?.org || '';
     if (!detectedOrg) {
       console.error('Could not determine org. Use --org <name>.');
+      return;
+    }
+
+    // Resolve the org timezone BEFORE writing anything. The daemon's cron
+    // scheduler fires fixed-hour crons in process-local time, so the daemon
+    // env must pin the org's zone as a LITERAL (never process.env-derived,
+    // which a poisoned shell could win — that was the 2026-06-11 regression).
+    // Refuse to overwrite an existing config when the timezone is missing or
+    // invalid: a bad regenerate must be non-destructive.
+    const orgTimezone = resolveOrgTimezone(projectRoot, detectedOrg);
+    if (!orgTimezone) {
+      console.error(
+        `Refusing to generate ${options.output}: org "${detectedOrg}" has no valid "timezone" in ` +
+        `orgs/${detectedOrg}/context.json. Set a valid IANA zone (e.g. "America/Chicago") and retry.`,
+      );
+      process.exitCode = 1;
       return;
     }
 
@@ -139,6 +156,13 @@ module.exports = {
         CTX_FRAMEWORK_ROOT: ${JSON.stringify(projectRoot)},
         CTX_PROJECT_ROOT: ${JSON.stringify(projectRoot)},
         CTX_ORG: process.env.CTX_ORG || ${JSON.stringify(detectedOrg)},
+        // Pinned LITERAL (not process.env-derived): the daemon schedules
+        // fixed-hour crons in process-local time, so its TZ must be the org's
+        // zone regardless of the shell that runs \`pm2 start/restart\`. The
+        // daemon also re-asserts this at startup (src/utils/timezone.ts) as the
+        // authoritative defense against \`--update-env\` TZ contamination.
+        TZ: ${JSON.stringify(orgTimezone)},
+        CTX_TIMEZONE: ${JSON.stringify(orgTimezone)},
       },
       max_restarts: 50,
       restart_delay: 5000,

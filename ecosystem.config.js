@@ -24,6 +24,15 @@ module.exports = {
         CTX_FRAMEWORK_ROOT: FRAMEWORK_ROOT,
         CTX_PROJECT_ROOT: PROJECT_ROOT,
         CTX_ORG: CTX_ORG,
+        // Pinned LITERAL (deliberately NOT `process.env.TZ || ...`): the cron
+        // scheduler fires fixed-hour crons in process-local time, so the daemon
+        // must run in the org's zone regardless of the shell that runs
+        // `pm2 start/restart`. A `pm2 restart --update-env` from an agent PTY
+        // (TZ=UTC) shifted every fixed-hour cron 5h on 2026-06-11; this literal
+        // + the daemon's startup re-assertion (src/utils/timezone.ts, reads
+        // orgs/<org>/context.json — the source of truth) prevent recurrence.
+        TZ: 'America/Chicago',
+        CTX_TIMEZONE: 'America/Chicago',
         // Debug-only: set to '1' to enable SIGUSR2 signal → controlled
         // uncaughtException for testing the crash-visibility path
         // (.daemon-crashed markers + crash-loop operator Telegram alert).

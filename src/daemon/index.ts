@@ -5,6 +5,7 @@ import { spawnSync } from 'child_process';
 import { join } from 'path';
 import { homedir } from 'os';
 import { ensureDir } from '../utils/atomic.js';
+import { applyDaemonTimezone } from '../utils/timezone.js';
 
 // Each fast-checker registers a process-level SIGUSR1 handler (see
 // fast-checker.ts:102). With >10 active agents the default Node listener cap
@@ -216,8 +217,12 @@ function handleFatal(
 /**
  * cortextOS Daemon - single process managing all agents.
  * Run via `pm2 start ecosystem.config.js` or `cortextos ecosystem && pm2 start`.
+ *
+ * Exported for tests (the `require.main === module` guard below prevents
+ * auto-start on import). Tests assert start() fails closed on an unresolvable
+ * org timezone before any AgentManager/scheduler is constructed.
  */
-class Daemon {
+export class Daemon {
   private agentManager: AgentManager | null = null;
   private ipcServer: IPCServer | null = null;
   private instanceId: string;
@@ -245,6 +250,16 @@ class Daemon {
       console.error('[daemon] CTX_FRAMEWORK_ROOT not set');
       process.exit(1);
     }
+
+    // Authoritatively set the process timezone from the org's context.json
+    // BEFORE constructing AgentManager / the cron scheduler — the primary
+    // defense against an inherited or `--update-env`-injected TZ (e.g. TZ=UTC
+    // from an agent PTY) silently shifting every fixed-hour cron. FAIL-CLOSED:
+    // if the org timezone cannot be resolved, applyDaemonTimezone THROWS here,
+    // before any scheduler is built, so the daemon never silently schedules in
+    // the wrong zone (PM2 surfaces the exit). See src/utils/timezone.ts
+    // (2026-06-11 regression).
+    applyDaemonTimezone(frameworkRoot, org);
 
     // Write PID file
     const pidFile = join(this.ctxRoot, 'daemon.pid');
