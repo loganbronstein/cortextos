@@ -2813,13 +2813,21 @@ busCommand
 
         const changes: string[] = [];
 
-        // Check allow list
+        // Check allow list. The bare "*" wildcard is NOT a valid Claude Code
+        // permission rule — it raises a "Settings Warning" dialog that can wedge a
+        // headless agent restart. Remove ONLY the bare "*" (preserve every other
+        // existing/unknown rule), then add any missing required tools.
         const current: string[] = settings?.permissions?.allow ?? [];
-        const missing = REQUIRED_ALLOW.filter(t => !current.includes(t));
+        const cleaned = current.filter(t => t !== '*');
+        const removedWildcard = cleaned.length !== current.length;
+        const missing = REQUIRED_ALLOW.filter(t => !cleaned.includes(t));
+        if (removedWildcard) changes.push('allow: -["*"] (removed invalid wildcard)');
         if (missing.length > 0) changes.push(`allow: +[${missing.join(', ')}]`);
 
-        // Check statusLine
-        if (!settings.statusLine) changes.push('statusLine: add hook-context-status');
+        // Check statusLine. Only ADD it when missing — never overwrite an existing
+        // (possibly customized) statusLine just because some other change applies.
+        const missingStatusLine = !settings.statusLine;
+        if (missingStatusLine) changes.push('statusLine: add hook-context-status');
 
         if (changes.length === 0) {
           console.log(`  OK   ${agent}: already up to date`);
@@ -2832,8 +2840,8 @@ busCommand
           patched++;
         } else {
           settings.permissions = settings.permissions ?? {};
-          settings.permissions.allow = [...current, ...missing];
-          settings.statusLine = STATUS_LINE;
+          settings.permissions.allow = [...cleaned, ...missing];
+          if (missingStatusLine) settings.statusLine = STATUS_LINE;
           fsWrite(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
           console.log(`  FIX  ${agent}: applied [${changes.join('; ')}]`);
           patched++;
