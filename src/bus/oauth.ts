@@ -15,6 +15,7 @@
 import { existsSync, readFileSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { execFileSync } from 'child_process';
 import { atomicWriteSync, ensureDir } from '../utils/atomic.js';
 
 // --- Types ---
@@ -164,6 +165,52 @@ function saveCache(ctxRoot: string, snapshot: UsageSnapshot): void {
   } catch { /* ignore */ }
 }
 
+// --- macOS Keychain fallback ---
+
+/** Default reader: pull the raw "Claude Code-credentials" blob via the `security` CLI. */
+function defaultReadKeychainBlob(): string {
+  // `-w` prints only the password (the JSON blob); stderr is dropped so a missing
+  // entry surfaces as a thrown non-zero exit, not noise. Bounded so a locked
+  // Keychain can't hang the usage check.
+  return execFileSync(
+    'security',
+    ['find-generic-password', '-s', 'Claude Code-credentials', '-w'],
+    { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 },
+  );
+}
+
+/**
+ * macOS-only fallback: read the Claude Code OAuth access token from the login
+ * Keychain. Claude Code stores a JSON blob under the "Claude Code-credentials"
+ * generic-password: `{ claudeAiOauth: { accessToken, ... }, ... }`.
+ *
+ * Returns the access token, or `undefined` on any non-macOS platform, a missing
+ * Keychain entry, a `security` command failure/timeout, or a malformed/empty
+ * blob — callers then fall through to the existing clear no-token error. NEVER
+ * logs the token or the raw Keychain blob.
+ *
+ * `platform` and `readBlob` are injectable for tests only.
+ */
+export function readKeychainOAuthToken(
+  platform: NodeJS.Platform = process.platform,
+  readBlob: () => string = defaultReadKeychainBlob,
+): string | undefined {
+  if (platform !== 'darwin') return undefined;
+  let raw: string;
+  try {
+    raw = readBlob();
+  } catch {
+    return undefined; // entry missing / security error / timeout
+  }
+  try {
+    const parsed = JSON.parse(raw) as { claudeAiOauth?: { accessToken?: unknown } };
+    const token = parsed?.claudeAiOauth?.accessToken;
+    return typeof token === 'string' && token.length > 0 ? token : undefined;
+  } catch {
+    return undefined; // malformed / non-JSON blob
+  }
+}
+
 // --- check-usage-api ---
 
 /**
@@ -193,7 +240,8 @@ export async function checkUsageApi(
     accessToken = acct.access_token;
     accountName = opts.account;
   } else {
-    // Fall back to env / Keychain
+    // Precedence (unchanged): accounts.json active account, then the
+    // CLAUDE_CODE_OAUTH_TOKEN env var, then the macOS Keychain fallback.
     const active = getActiveAccount(ctxRoot);
     if (active) {
       accessToken = active.account.access_token;
@@ -201,6 +249,13 @@ export async function checkUsageApi(
     } else {
       accessToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
       accountName = 'env';
+      if (!accessToken) {
+        // Last resort: the Claude Code login Keychain (macOS only). undefined on
+        // non-macOS / missing / malformed, which falls through to the same clear
+        // no-token error below.
+        accessToken = readKeychainOAuthToken();
+        accountName = 'keychain';
+      }
       if (!accessToken) throw new Error('No OAuth token available (no accounts.json and CLAUDE_CODE_OAUTH_TOKEN not set)');
     }
   }
