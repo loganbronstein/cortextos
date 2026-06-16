@@ -100,6 +100,14 @@ beforeEach(() => {
   // agentExistsInFramework() can find TEST_AGENT.
   frameworkRoot = mkdtempSync(join(tmpdir(), 'bus-crons-fw-'));
   mkdirSync(join(frameworkRoot, 'orgs', 'lifeos', 'agents', TEST_AGENT), { recursive: true });
+  // list-crons resolves the agent's org timezone to compute fixed-expression
+  // next-fire and FAIL-CLOSES (console.error + early return, no table) when the
+  // org has no valid timezone. The org therefore needs a context.json with a
+  // valid IANA zone, or any test that lists an expression cron prints nothing.
+  writeFileSync(
+    join(frameworkRoot, 'orgs', 'lifeos', 'context.json'),
+    JSON.stringify({ timezone: 'America/Chicago' }),
+  );
 
   process.env.CTX_ROOT = tmpRoot;
   process.env.CTX_FRAMEWORK_ROOT = frameworkRoot;
