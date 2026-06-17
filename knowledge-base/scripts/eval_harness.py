@@ -404,14 +404,21 @@ def _per_collection(per_query) -> dict:
 
 
 def _misses(per_query) -> list:
-    """Scored queries whose expected source NEVER retrieved (recall@20==0) in the
-    ALL-7 MERGED view = a real fix-mapping-or-reingest signal (surface loud). Uses
-    the corpus-wide reference: if it's not retrievable across all 7, it can't be
-    reached by prod either."""
-    return [{"id": r["id"], "tag": r["tag"], "query": r["query"],
-             "collection": r["collection"], "expected_sources": r["expected_sources"]}
-            for r in per_query
-            if not r["negative_control"] and r["all7_merged"]["recall@20"] == 0.0]
+    """Scored queries whose expected source is NOT retrieved within top-20 by the
+    POST-FIX-A PRODUCTION path (flag_on_rows) = the real fix-mapping-or-reingest
+    signal. NOTE: all7_merged is the WRONG basis for this — the 7-collection merge
+    has more competing rows, so it can spuriously 'miss' a source that the prod
+    path (shared + the query's own agent collection) actually retrieves. We surface
+    the prod-path miss and annotate whether the corpus can retrieve it at all
+    (all7 @20) to distinguish 'reingest needed' from 'ranking/noise'."""
+    out = []
+    for r in per_query:
+        if r["negative_control"] or r["flag_on_rows"]["recall@20"] != 0.0:
+            continue
+        out.append({"id": r["id"], "tag": r["tag"], "query": r["query"],
+                    "collection": r["collection"], "expected_sources": r["expected_sources"],
+                    "corpus_retrievable_all7@20": r["all7_merged"]["recall@20"] == 1.0})
+    return out
 
 
 VIEW_LABELS = {
@@ -449,11 +456,15 @@ def print_report(report: dict) -> None:
               f"ON R@5={on['recall@5']} R@20={on['recall@20']} MRR={on['mrr']}")
     misses = report["misses"]
     if misses:
-        print(f"\n⚠ {len(misses)} EXPECTED-SOURCE MISS(ES) (recall@20==0 — fix mapping or re-ingest):")
+        print(f"\n⚠ {len(misses)} PROD-PATH MISS(ES) (flag_on_rows recall@20==0 — fix mapping or re-ingest):")
         for m in misses:
-            print(f"    [{m['id']} {m['tag']}] {m['query']!r} -> expected {m['expected_sources']} ({m['collection']})")
+            tail = "NOT vector-retrievable corpus-wide @20 (hybrid Phase-2 or reingest)" \
+                if not m.get("corpus_retrievable_all7@20") \
+                else "corpus CAN retrieve it via vector (ranking gap — rerank Phase-2 may help)"
+            print(f"    [{m['id']} {m['tag']}] {m['query']!r} -> expected {m['expected_sources']} "
+                  f"({m['collection']}) — {tail}")
     else:
-        print("\nNo expected-source misses (every scored query's source retrieved within top-20).")
+        print("\nNo prod-path misses (every scored query's source retrieved within top-20 by flag_on).")
     if report["provisional"]:
         print("\n⚠ PROVISIONAL — see banner.")
 
