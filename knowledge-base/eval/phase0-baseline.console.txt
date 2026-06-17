@@ -1,0 +1,27 @@
+==========================================================================
+  LOCKED baseline (eval-set locked 2026-06-17T00:24Z).
+  eval-set v1.1-locked | snapshot=/Users/loganbronstein/.cortextos/default/orgs/cortex/knowledge-base/chromadb-snapshots/phase0-baseline-20260617T002417Z
+==========================================================================
+
+[ALL-7 (corpus-wide)]  n=18 scored / 2 controls
+  Recall@5=0.5556  Recall@20=0.8333  MRR=0.3911  FP-rate=1.0
+
+[PROD (shared + agent-private)]  n=18 scored / 2 controls
+  Recall@5=0.7778  Recall@20=0.8889  MRR=0.6662  FP-rate=1.0
+
+Per-collection (ALL-7):
+  agent-analyst    n= 1  R@5=0.0  R@20=1.0  MRR=0.0833
+  agent-boss       n= 2  R@5=0.5  R@20=1.0  MRR=0.2292
+  agent-coder      n= 1  R@5=0.0  R@20=1.0  MRR=0.0909
+  agent-codex      n= 1  R@5=1.0  R@20=1.0  MRR=0.3333
+  agent-marketing  n= 1  R@5=0.0  R@20=0.0  MRR=0.0
+  agent-scribe     n= 4  R@5=0.5  R@20=1.0  MRR=0.4444
+  any              n= 0  R@5=None  R@20=None  MRR=None
+  shared-cortex    n= 8  R@5=0.75  R@20=0.75  MRR=0.5369
+
+⚠ 3 EXPECTED-SOURCE MISS(ES) (recall@20==0 — fix mapping or re-ingest):
+    [q07 LEX] 'Aleric Heck AdOutreach' -> expected ['sa-creative-rules.md'] (shared-cortex)
+    [q08 LEX] 'reel DZn45Q2OrqA' -> expected ['sa-creative-rules.md'] (shared-cortex)
+    [q14 RANK] 'What are the SA brand CTA rules for paid ads?' -> expected ['agents/marketing/MEMORY.md'] (agent-marketing)
+
+Full report -> /tmp/kb-phase0-baseline.json

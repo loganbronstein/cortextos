@@ -1,0 +1,932 @@
+{
+  "provenance": {
+    "eval_set_version": "1.1-locked",
+    "locked_at_utc": "2026-06-17T00:24Z",
+    "snapshot_dir": "/Users/loganbronstein/.cortextos/default/orgs/cortex/knowledge-base/chromadb-snapshots/phase0-baseline-20260617T002417Z",
+    "collections": [
+      "agent-marketing",
+      "agent-boss",
+      "agent-scribe",
+      "shared-cortex",
+      "agent-codex",
+      "agent-coder",
+      "agent-analyst"
+    ],
+    "prod_threshold": 0.5
+  },
+  "provisional": false,
+  "aggregate": {
+    "all7": {
+      "n_scored": 18,
+      "recall@5": 0.5556,
+      "recall@20": 0.8333,
+      "mrr": 0.3911,
+      "n_controls": 2,
+      "false_positive_rate": 1.0
+    },
+    "prod": {
+      "n_scored": 18,
+      "recall@5": 0.7778,
+      "recall@20": 0.8889,
+      "mrr": 0.6662,
+      "n_controls": 2,
+      "false_positive_rate": 1.0
+    }
+  },
+  "per_collection": {
+    "agent-analyst": {
+      "all7": {
+        "n_scored": 1,
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "mrr": 0.0833,
+        "n_controls": 0,
+        "false_positive_rate": null
+      },
+      "prod": {
+        "n_scored": 1,
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "mrr": 0.5,
+        "n_controls": 0,
+        "false_positive_rate": null
+      }
+    },
+    "agent-boss": {
+      "all7": {
+        "n_scored": 2,
+        "recall@5": 0.5,
+        "recall@20": 1.0,
+        "mrr": 0.2292,
+        "n_controls": 0,
+        "false_positive_rate": null
+      },
+      "prod": {
+        "n_scored": 2,
+        "recall@5": 0.5,
+        "recall@20": 1.0,
+        "mrr": 0.5625,
+        "n_controls": 0,
+        "false_positive_rate": null
+      }
+    },
+    "agent-coder": {
+      "all7": {
+        "n_scored": 1,
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "mrr": 0.0909,
+        "n_controls": 0,
+        "false_positive_rate": null
+      },
+      "prod": {
+        "n_scored": 1,
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "mrr": 1.0,
+        "n_controls": 0,
+        "false_positive_rate": null
+      }
+    },
+    "agent-codex": {
+      "all7": {
+        "n_scored": 1,
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "mrr": 0.3333,
+        "n_controls": 0,
+        "false_positive_rate": null
+      },
+      "prod": {
+        "n_scored": 1,
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "mrr": 1.0,
+        "n_controls": 0,
+        "false_positive_rate": null
+      }
+    },
+    "agent-marketing": {
+      "all7": {
+        "n_scored": 1,
+        "recall@5": 0.0,
+        "recall@20": 0.0,
+        "mrr": 0.0,
+        "n_controls": 0,
+        "false_positive_rate": null
+      },
+      "prod": {
+        "n_scored": 1,
+        "recall@5": 0.0,
+        "recall@20": 0.0,
+        "mrr": 0.0,
+        "n_controls": 0,
+        "false_positive_rate": null
+      }
+    },
+    "agent-scribe": {
+      "all7": {
+        "n_scored": 4,
+        "recall@5": 0.5,
+        "recall@20": 1.0,
+        "mrr": 0.4444,
+        "n_controls": 0,
+        "false_positive_rate": null
+      },
+      "prod": {
+        "n_scored": 4,
+        "recall@5": 0.75,
+        "recall@20": 1.0,
+        "mrr": 0.6667,
+        "n_controls": 0,
+        "false_positive_rate": null
+      }
+    },
+    "any": {
+      "all7": {
+        "n_scored": 0,
+        "recall@5": null,
+        "recall@20": null,
+        "mrr": null,
+        "n_controls": 2,
+        "false_positive_rate": 1.0
+      },
+      "prod": {
+        "n_scored": 0,
+        "recall@5": null,
+        "recall@20": null,
+        "mrr": null,
+        "n_controls": 2,
+        "false_positive_rate": 1.0
+      }
+    },
+    "shared-cortex": {
+      "all7": {
+        "n_scored": 8,
+        "recall@5": 0.75,
+        "recall@20": 0.75,
+        "mrr": 0.5369,
+        "n_controls": 0,
+        "false_positive_rate": null
+      },
+      "prod": {
+        "n_scored": 8,
+        "recall@5": 0.875,
+        "recall@20": 0.875,
+        "mrr": 0.7125,
+        "n_controls": 0,
+        "false_positive_rate": null
+      }
+    }
+  },
+  "misses": [
+    {
+      "id": "q07",
+      "tag": "LEX",
+      "query": "Aleric Heck AdOutreach",
+      "collection": "shared-cortex",
+      "expected_sources": [
+        "sa-creative-rules.md"
+      ]
+    },
+    {
+      "id": "q08",
+      "tag": "LEX",
+      "query": "reel DZn45Q2OrqA",
+      "collection": "shared-cortex",
+      "expected_sources": [
+        "sa-creative-rules.md"
+      ]
+    },
+    {
+      "id": "q14",
+      "tag": "RANK",
+      "query": "What are the SA brand CTA rules for paid ads?",
+      "collection": "agent-marketing",
+      "expected_sources": [
+        "agents/marketing/MEMORY.md"
+      ]
+    }
+  ],
+  "per_query": [
+    {
+      "id": "q01",
+      "tag": "VEC",
+      "query": "What is the locked Sale Advisor paid-ad CTA?",
+      "collection": "shared-cortex",
+      "negative_control": false,
+      "expected_sources": [
+        "sa-creative-rules.md",
+        "orgs/cortex/knowledge.md"
+      ],
+      "all7": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/MEMORY.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-target-audience.md",
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/marketing/google-execution-packet.md",
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/ad-copy/ad-creatives-young-adults.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-target-audience.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Client Playbook.md"
+        ]
+      }
+    },
+    {
+      "id": "q02",
+      "tag": "CTX",
+      "query": "Why is the SA headline HIGH VALUE ITEMS and not HIGH-END PIECES?",
+      "collection": "shared-cortex",
+      "negative_control": false,
+      "expected_sources": [
+        "sa-creative-rules.md"
+      ],
+      "all7": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 0.25,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/MEMORY.md",
+          "/Users/loganbronstein/.claude/projects/-Users-loganbronstein-Sale-Advisor/memory/terminals/terminal-b.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-target-audience.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 0.5,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-target-audience.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Competitors.md"
+        ]
+      }
+    },
+    {
+      "id": "q03",
+      "tag": "VEC",
+      "query": "What is Sale Advisor's target product and audience?",
+      "collection": "shared-cortex",
+      "negative_control": false,
+      "expected_sources": [
+        "sa-target-audience.md",
+        "orgs/cortex/knowledge.md"
+      ],
+      "all7": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-target-audience.md",
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/ad-copy/LAUNCH-AD-PLAYBOOK-MASTER.md",
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/ad-copy/competitive-ad-intelligence.md",
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/marketing/canonical-rulebook.md",
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/marketing/google-execution-packet.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-target-audience.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Chicago Market.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Business Rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md"
+        ]
+      }
+    },
+    {
+      "id": "q04",
+      "tag": "LEX",
+      "query": "Meta ads access META_ADS_ACCESS_TOKEN",
+      "collection": "shared-cortex",
+      "negative_control": false,
+      "expected_sources": [
+        "orgs/cortex/knowledge.md"
+      ],
+      "all7": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 0.5,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/marketing/MEMORY.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Daily Notes/2026-04-19.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/marketing/memory/2026-06-01.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/marketing/memory/2026-05-30.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Chicago Market.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/fleet-operational-doctrine.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Ad Strategy.md"
+        ]
+      }
+    },
+    {
+      "id": "q05",
+      "tag": "VEC",
+      "query": "What is the cost guardrail for heavy multi-agent workflows?",
+      "collection": "shared-cortex",
+      "negative_control": false,
+      "expected_sources": [
+        "orgs/cortex/knowledge.md"
+      ],
+      "all7": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/MEMORY.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Daily Notes/2026-04-20.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Daily Notes/2026-04-19.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/analyst/GUARDRAILS.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Pricing/2026-04-23 Marketplace Intelligence Layer Audit - Pass 2 Analyst Review.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/experiments/marketing-agent-spec.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/MEMORY_ARCHITECTURE.md"
+        ]
+      }
+    },
+    {
+      "id": "q06",
+      "tag": "CTX",
+      "query": "What is the SA 4-step ad format standard?",
+      "collection": "shared-cortex",
+      "negative_control": false,
+      "expected_sources": [
+        "sa-creative-rules.md"
+      ],
+      "all7": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 0.5,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/.claude/projects/-Users-loganbronstein-Sale-Advisor/memory/terminals/terminal-b.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/marketing/meta-execution-packet.md",
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/brand/brand-dna.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-target-audience.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Competitors.md"
+        ]
+      }
+    },
+    {
+      "id": "q07",
+      "tag": "LEX",
+      "query": "Aleric Heck AdOutreach",
+      "collection": "shared-cortex",
+      "negative_control": false,
+      "expected_sources": [
+        "sa-creative-rules.md"
+      ],
+      "all7": {
+        "recall@5": 0.0,
+        "recall@20": 0.0,
+        "rr": 0.045454545454545456,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/marketing/google-execution-packet.md",
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/ad-copy/competitive-ad-intelligence.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Daily Notes/2026-04-16.md",
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/ad-copy/LAUNCH-AD-PLAYBOOK-MASTER.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Launch Plan.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 0.2,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Ad Strategy.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Chicago Market.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md"
+        ]
+      }
+    },
+    {
+      "id": "q08",
+      "tag": "LEX",
+      "query": "reel DZn45Q2OrqA",
+      "collection": "shared-cortex",
+      "negative_control": false,
+      "expected_sources": [
+        "sa-creative-rules.md"
+      ],
+      "all7": {
+        "recall@5": 0.0,
+        "recall@20": 0.0,
+        "rr": 0.0,
+        "false_positive": null,
+        "top5": [
+          "/private/tmp/ig_reels_corpus.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-16.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Daily Notes/2026-04-20.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Marketing Intel/Reel Hook Analysis.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Marketing Intel/Video Techniques.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 0.0,
+        "recall@20": 0.0,
+        "rr": 0.0,
+        "false_positive": null,
+        "top5": [
+          "/private/tmp/ig_reels_corpus.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/analyst/scripts/test-precompact-hook-report.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md"
+        ]
+      }
+    },
+    {
+      "id": "q09",
+      "tag": "VEC",
+      "query": "What is the ownership status of the pricer build?",
+      "collection": "agent-boss",
+      "negative_control": false,
+      "expected_sources": [
+        "agents/boss/MEMORY.md"
+      ],
+      "all7": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 0.3333333333333333,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-16.md",
+          "/Users/loganbronstein/Sale Advisor/tasks/valuation-core-bridge/from-codex/006-pricer-deep-review-2026-05-09.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/MEMORY.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-15.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-06-10.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/MEMORY.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-06-10.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-06-16.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-06-15.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-04-23.md"
+        ]
+      }
+    },
+    {
+      "id": "q10",
+      "tag": "VEC",
+      "query": "What did Logan decide about a Higgsfield subscription?",
+      "collection": "agent-boss",
+      "negative_control": false,
+      "expected_sources": [
+        "agents/boss/MEMORY.md",
+        "agents/scribe/memory/2026-06-16.md"
+      ],
+      "all7": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.125,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Daily Notes/2026-04-20.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-04-29.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Daily Notes/2026-04-14.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Marketing/Brand Foundation/2026-04-23 Creative Tool Benchmark Research.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Marketing/Brand Foundation/2026-04-27 Subtle Motion Models Survey.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.125,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-04-29.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-06-15.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-06-11.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-05-11.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-06-12.md"
+        ]
+      }
+    },
+    {
+      "id": "q11",
+      "tag": "CTX",
+      "query": "What is the bridge-relay threshold?",
+      "collection": "agent-scribe",
+      "negative_control": false,
+      "expected_sources": [
+        "agents/scribe/MEMORY.md"
+      ],
+      "all7": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.1111111111111111,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-02.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/coder/MEMORY.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/codex/memory/2026-06-04.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-16.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-05.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.16666666666666666,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-02.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-16.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-05.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-15.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/analyst/experiments/sa-error-patterns-and-thresholds.md"
+        ]
+      }
+    },
+    {
+      "id": "q12",
+      "tag": "LEX",
+      "query": "Is kb-ingest additive or full-document-replace?",
+      "collection": "agent-scribe",
+      "negative_control": false,
+      "expected_sources": [
+        "agents/scribe/MEMORY.md"
+      ],
+      "all7": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/MEMORY.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/marketing/memory/2026-04-22.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/analyst/memory/2026-04-26.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/marketing/MEMORY.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-16.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/MEMORY.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-16.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/MEMORY_ARCHITECTURE.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-05-31.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-09.md"
+        ]
+      }
+    },
+    {
+      "id": "q13",
+      "tag": "VEC",
+      "query": "How does the vault transcript-linker avoid data loss?",
+      "collection": "agent-scribe",
+      "negative_control": false,
+      "expected_sources": [
+        "agents/scribe/MEMORY.md"
+      ],
+      "all7": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 0.5,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-09.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/MEMORY.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/codex/memory/2026-06-09.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-05-03.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-05-04.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 0.5,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-09.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/MEMORY.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-05-03.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-05-04.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/MEMORY_ARCHITECTURE_PHASE2_PLAN.md"
+        ]
+      }
+    },
+    {
+      "id": "q14",
+      "tag": "RANK",
+      "query": "What are the SA brand CTA rules for paid ads?",
+      "collection": "agent-marketing",
+      "negative_control": false,
+      "expected_sources": [
+        "agents/marketing/MEMORY.md"
+      ],
+      "all7": {
+        "recall@5": 0.0,
+        "recall@20": 0.0,
+        "rr": 0.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md",
+          "/Users/loganbronstein/.claude/projects/-Users-loganbronstein-Sale-Advisor/memory/terminals/terminal-b.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Daily Notes/2026-04-21.md",
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/marketing/canonical-rulebook.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 0.0,
+        "recall@20": 0.0,
+        "rr": 0.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md",
+          "/Users/loganbronstein/.claude/projects/-Users-loganbronstein-Sale-Advisor/memory/terminals/terminal-b.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Daily Notes/2026-04-21.md",
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/marketing/canonical-rulebook.md"
+        ]
+      }
+    },
+    {
+      "id": "q15",
+      "tag": "LEX",
+      "query": "task_1781567270131",
+      "collection": "agent-scribe",
+      "negative_control": false,
+      "expected_sources": [
+        "agents/scribe/memory/2026-06-16.md"
+      ],
+      "all7": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.16666666666666666,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Marketing/Brand Foundation/2026-04-28 GPT Image 2 Implementation Status + 30d Meta Review.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-06-08.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/marketing/memory/2026-04-28.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/marketing/memory/2026-05-01.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/marketing/memory/2026-06-02.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-16.md",
+          "/private/tmp/ig_reels_corpus.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-09.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-05.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-10.md"
+        ]
+      }
+    },
+    {
+      "id": "q16",
+      "tag": "VEC",
+      "query": "How does the analyst measure value-per-lead?",
+      "collection": "agent-analyst",
+      "negative_control": false,
+      "expected_sources": [
+        "agents/analyst/MEMORY.md"
+      ],
+      "all7": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.08333333333333333,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-06-15.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/coder/MEMORY.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/MEMORY.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-06-08.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-15.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 0.5,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/fleet-operational-doctrine.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/analyst/MEMORY.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Client Playbook.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md"
+        ]
+      }
+    },
+    {
+      "id": "q17",
+      "tag": "LEX",
+      "query": "Slice 2.4b capped velocity",
+      "collection": "agent-coder",
+      "negative_control": false,
+      "expected_sources": [
+        "agents/coder/MEMORY.md"
+      ],
+      "all7": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.09090909090909091,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/codex/memory/2026-06-16.md",
+          "/Users/loganbronstein/Sale Advisor/tasks/valuation-core-bridge/executor-packets/001-slice-foundation-v4.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/MEMORY.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-16.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-06-16.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/coder/MEMORY.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Pricing/2026-04-22 Fix 1 Collectibles Source Routing Measured Delta.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/analyst/scripts/test-precompact-hook-report.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/coder/memory/2026-06-04.md"
+        ]
+      }
+    },
+    {
+      "id": "q18",
+      "tag": "VEC",
+      "query": "What is codex's role in the fleet?",
+      "collection": "agent-codex",
+      "negative_control": false,
+      "expected_sources": [
+        "agents/codex/MEMORY.md"
+      ],
+      "all7": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 0.3333333333333333,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/marketing/MEMORY.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-05-11.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/codex/MEMORY.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-16.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/codex/memory/2026-05-14.md"
+        ]
+      },
+      "prod": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/codex/MEMORY.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/codex/memory/2026-05-14.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/codex/memory/2026-06-07.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/codex/memory/2026-05-10.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/codex/memory/2026-06-09.md"
+        ]
+      }
+    },
+    {
+      "id": "q19",
+      "tag": "VEC",
+      "query": "What is Sale Advisor's cryptocurrency strategy?",
+      "collection": "any",
+      "negative_control": true,
+      "expected_sources": [],
+      "all7": {
+        "recall@5": null,
+        "recall@20": null,
+        "rr": null,
+        "false_positive": true,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/ad-copy/LAUNCH-AD-PLAYBOOK-MASTER.md",
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/marketing/canonical-rulebook.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Client Playbook.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Marketing Intel/Ad Trends.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Marketing/Brand Foundation/2026-04-22 Brand Voice Distillation.md"
+        ]
+      },
+      "prod": {
+        "recall@5": null,
+        "recall@20": null,
+        "rr": null,
+        "false_positive": true,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Client Playbook.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-target-audience.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Business Rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md"
+        ]
+      }
+    },
+    {
+      "id": "q20",
+      "tag": "VEC",
+      "query": "What is the office address in Tokyo?",
+      "collection": "any",
+      "negative_control": true,
+      "expected_sources": [],
+      "all7": {
+        "recall@5": null,
+        "recall@20": null,
+        "rr": null,
+        "false_positive": true,
+        "top5": [
+          "/Users/loganbronstein/.claude/projects/-Users-loganbronstein-Sale-Advisor/memory/terminals/terminal-b-archive-2.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-06-02.md",
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/marketing/canonical-rulebook.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/coder/MEMORY.md"
+        ]
+      },
+      "prod": {
+        "recall@5": null,
+        "recall@20": null,
+        "rr": null,
+        "false_positive": true,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Business Rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Chicago Market.md"
+        ]
+      }
+    }
+  ]
+}
