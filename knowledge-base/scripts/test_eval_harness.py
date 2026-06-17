@@ -115,11 +115,13 @@ class TestEvaluateMocked(unittest.TestCase):
         })
         rep = eh.evaluate(eval_set, "py", "mmrag.py", {}, None, 0.5, query_fn=fake)
         self.assertFalse(rep["provisional"])  # locked
-        agg = rep["aggregate"]["all7"]
+        agg = rep["aggregate"]["all7_merged"]
         self.assertEqual(agg["n_scored"], 1)
         self.assertEqual(agg["recall@5"], 1.0)
         self.assertEqual(agg["mrr"], 1.0)
         self.assertEqual(agg["false_positive_rate"], 1.0)  # control returned >=0.5
+        # PROD_CURRENT control FP also fires (shared >=0.5 reachable on every path)
+        self.assertEqual(rep["aggregate"]["prod_current"]["false_positive_rate"], 1.0)
         self.assertEqual(rep["misses"], [])               # nothing missed
 
     def test_miss_is_surfaced(self):
@@ -133,9 +135,69 @@ class TestEvaluateMocked(unittest.TestCase):
         }
         fake = self._fake({c: [("/x/haystack.md", 0.7)] for c in eh.DEFAULT_COLLECTIONS})
         rep = eh.evaluate(eval_set, "py", "mmrag.py", {}, None, 0.5, query_fn=fake)
-        self.assertEqual(rep["aggregate"]["all7"]["recall@5"], 0.0)
+        self.assertEqual(rep["aggregate"]["all7_merged"]["recall@5"], 0.0)
         self.assertEqual(len(rep["misses"]), 1)            # surfaced loud
         self.assertEqual(rep["misses"][0]["id"], "q1")
+
+
+class TestProdCurrentFidelity(unittest.TestCase):
+    """codex Phase-0 exit-gate: PROD_CURRENT must match the real wrapper
+    (src/bus/knowledge-base.ts:158-224) — shared-first concat, threshold-filtered,
+    NO global re-sort — and therefore DIFFER from the merged ranking whenever an
+    agent-private result outscores a shared one."""
+
+    def test_prod_current_preserves_shared_first_vs_merged(self):
+        by_col = {
+            "shared-cortex": [("/x/shared/lo.md", 0.6)],
+            "agent-coder": [("/x/agents/coder/hi.md", 0.9)],
+        }
+        pc = eh.prod_current_ranked(by_col, "agent-coder", "shared-cortex", 0.5)
+        # shared FIRST even though its sim (0.6) is LOWER than the agent hit (0.9)
+        self.assertEqual([p for p, _ in pc],
+                         ["/x/shared/lo.md", "/x/agents/coder/hi.md"])
+        merged = eh.merge_ranked([by_col["shared-cortex"], by_col["agent-coder"]])
+        # merged sorts by similarity -> agent hit ranks first
+        self.assertEqual([p for p, _ in merged],
+                         ["/x/agents/coder/hi.md", "/x/shared/lo.md"])
+        # the two views genuinely differ (the whole point of the fix)
+        self.assertNotEqual([p for p, _ in pc], [p for p, _ in merged])
+
+    def test_prod_current_threshold_filter_and_first_seen_dedup(self):
+        by_col = {
+            "shared-cortex": [("/x/a.md", 0.7), ("/x/below.md", 0.3), ("/x/dup.md", 0.55)],
+            "agent-coder": [("/x/dup.md", 0.8), ("/x/b.md", 0.51)],
+        }
+        pc = eh.prod_current_ranked(by_col, "agent-coder", "shared-cortex", 0.5)
+        # below-threshold (0.3) dropped; dup keeps its FIRST (shared) occurrence; shared-first
+        self.assertEqual([p for p, _ in pc], ["/x/a.md", "/x/dup.md", "/x/b.md"])
+        # dup retains the shared similarity (0.55), not the agent's higher 0.8
+        self.assertEqual(dict(pc)["/x/dup.md"], 0.55)
+
+    def test_prod_current_shared_only_for_shared_collection(self):
+        by_col = {
+            "shared-cortex": [("/x/s.md", 0.8)],
+            "agent-coder": [("/x/a.md", 0.9)],
+        }
+        pc = eh.prod_current_ranked(by_col, "shared-cortex", "shared-cortex", 0.5)
+        self.assertEqual([p for p, _ in pc], ["/x/s.md"])  # no agent path for shared queries
+
+    def test_prod_current_fp_any_control_across_paths(self):
+        cols = ["shared-cortex", "agent-coder", "agent-boss"]
+        clean = {"shared-cortex": [("/x/a.md", 0.3)], "agent-coder": [("/x/b.md", 0.2)], "agent-boss": []}
+        self.assertFalse(eh.prod_current_fp(clean, "any", cols, "shared-cortex", 0.5))
+        # a confident match on ANY single agent path is an FP for an 'any' control
+        hit = dict(clean, **{"agent-boss": [("/x/c.md", 0.7)]})
+        self.assertTrue(eh.prod_current_fp(hit, "any", cols, "shared-cortex", 0.5))
+
+    def test_prod_current_fp_agent_control_is_shared_or_that_agent(self):
+        cols = ["shared-cortex", "agent-coder", "agent-boss"]
+        by_col = {"shared-cortex": [("/x/a.md", 0.2)], "agent-coder": [("/x/b.md", 0.6)], "agent-boss": [("/x/c.md", 0.9)]}
+        # agent-coder control: FP from its own confident hit (boss is NOT on this path)
+        self.assertTrue(eh.prod_current_fp(by_col, "agent-coder", cols, "shared-cortex", 0.5))
+        # a control routed at an agent with no confident hit on shared OR itself = no FP,
+        # even though a DIFFERENT agent (boss) has one
+        quiet = {"shared-cortex": [("/x/a.md", 0.2)], "agent-coder": [("/x/b.md", 0.4)], "agent-boss": [("/x/c.md", 0.9)]}
+        self.assertFalse(eh.prod_current_fp(quiet, "agent-coder", cols, "shared-cortex", 0.5))
 
 
 if __name__ == "__main__":

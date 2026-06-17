@@ -1,6 +1,8 @@
 {
   "provenance": {
     "eval_set_version": "1.1-locked",
+    "eval_set_path": "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/kb-retrieval-eval-set.json",
+    "eval_set_sha256": "b669c058d9104e34422e5d4f6e1c5f5583e0800b81d33c799fb60113eec527c6",
     "locked_at_utc": "2026-06-17T00:24Z",
     "snapshot_dir": "/Users/loganbronstein/.cortextos/default/orgs/cortex/knowledge-base/chromadb-snapshots/phase0-baseline-20260617T002417Z",
     "collections": [
@@ -16,15 +18,23 @@
   },
   "provisional": false,
   "aggregate": {
-    "all7": {
+    "all7_merged": {
       "n_scored": 18,
       "recall@5": 0.6111,
       "recall@20": 0.8889,
-      "mrr": 0.4124,
+      "mrr": 0.4028,
       "n_controls": 2,
       "false_positive_rate": 1.0
     },
-    "prod": {
+    "prod_current": {
+      "n_scored": 18,
+      "recall@5": 0.3333,
+      "recall@20": 0.9444,
+      "mrr": 0.3647,
+      "n_controls": 2,
+      "false_positive_rate": 1.0
+    },
+    "prod_merged_candidate": {
       "n_scored": 18,
       "recall@5": 0.7778,
       "recall@20": 0.9444,
@@ -35,7 +45,7 @@
   },
   "per_collection": {
     "agent-analyst": {
-      "all7": {
+      "all7_merged": {
         "n_scored": 1,
         "recall@5": 0.0,
         "recall@20": 1.0,
@@ -43,7 +53,15 @@
         "n_controls": 0,
         "false_positive_rate": null
       },
-      "prod": {
+      "prod_current": {
+        "n_scored": 1,
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "mrr": 0.0909,
+        "n_controls": 0,
+        "false_positive_rate": null
+      },
+      "prod_merged_candidate": {
         "n_scored": 1,
         "recall@5": 1.0,
         "recall@20": 1.0,
@@ -53,7 +71,7 @@
       }
     },
     "agent-boss": {
-      "all7": {
+      "all7_merged": {
         "n_scored": 2,
         "recall@5": 0.5,
         "recall@20": 1.0,
@@ -61,7 +79,15 @@
         "n_controls": 0,
         "false_positive_rate": null
       },
-      "prod": {
+      "prod_current": {
+        "n_scored": 2,
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "mrr": 0.085,
+        "n_controls": 0,
+        "false_positive_rate": null
+      },
+      "prod_merged_candidate": {
         "n_scored": 2,
         "recall@5": 0.5,
         "recall@20": 1.0,
@@ -71,7 +97,7 @@
       }
     },
     "agent-coder": {
-      "all7": {
+      "all7_merged": {
         "n_scored": 1,
         "recall@5": 0.0,
         "recall@20": 1.0,
@@ -79,7 +105,15 @@
         "n_controls": 0,
         "false_positive_rate": null
       },
-      "prod": {
+      "prod_current": {
+        "n_scored": 1,
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "mrr": 0.1111,
+        "n_controls": 0,
+        "false_positive_rate": null
+      },
+      "prod_merged_candidate": {
         "n_scored": 1,
         "recall@5": 1.0,
         "recall@20": 1.0,
@@ -89,7 +123,7 @@
       }
     },
     "agent-codex": {
-      "all7": {
+      "all7_merged": {
         "n_scored": 1,
         "recall@5": 1.0,
         "recall@20": 1.0,
@@ -97,7 +131,15 @@
         "n_controls": 0,
         "false_positive_rate": null
       },
-      "prod": {
+      "prod_current": {
+        "n_scored": 1,
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "mrr": 0.1,
+        "n_controls": 0,
+        "false_positive_rate": null
+      },
+      "prod_merged_candidate": {
         "n_scored": 1,
         "recall@5": 1.0,
         "recall@20": 1.0,
@@ -107,7 +149,7 @@
       }
     },
     "agent-marketing": {
-      "all7": {
+      "all7_merged": {
         "n_scored": 1,
         "recall@5": 0.0,
         "recall@20": 0.0,
@@ -115,7 +157,15 @@
         "n_controls": 0,
         "false_positive_rate": null
       },
-      "prod": {
+      "prod_current": {
+        "n_scored": 1,
+        "recall@5": 0.0,
+        "recall@20": 0.0,
+        "mrr": 0.0,
+        "n_controls": 0,
+        "false_positive_rate": null
+      },
+      "prod_merged_candidate": {
         "n_scored": 1,
         "recall@5": 0.0,
         "recall@20": 0.0,
@@ -125,15 +175,23 @@
       }
     },
     "agent-scribe": {
-      "all7": {
+      "all7_merged": {
         "n_scored": 6,
         "recall@5": 0.5,
         "recall@20": 0.8333,
-        "mrr": 0.368,
+        "mrr": 0.3391,
         "n_controls": 0,
         "false_positive_rate": null
       },
-      "prod": {
+      "prod_current": {
+        "n_scored": 6,
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "mrr": 0.0987,
+        "n_controls": 0,
+        "false_positive_rate": null
+      },
+      "prod_merged_candidate": {
         "n_scored": 6,
         "recall@5": 0.6667,
         "recall@20": 1.0,
@@ -143,7 +201,7 @@
       }
     },
     "any": {
-      "all7": {
+      "all7_merged": {
         "n_scored": 0,
         "recall@5": null,
         "recall@20": null,
@@ -151,7 +209,15 @@
         "n_controls": 2,
         "false_positive_rate": 1.0
       },
-      "prod": {
+      "prod_current": {
+        "n_scored": 0,
+        "recall@5": null,
+        "recall@20": null,
+        "mrr": null,
+        "n_controls": 2,
+        "false_positive_rate": 1.0
+      },
+      "prod_merged_candidate": {
         "n_scored": 0,
         "recall@5": null,
         "recall@20": null,
@@ -161,7 +227,7 @@
       }
     },
     "shared-cortex": {
-      "all7": {
+      "all7_merged": {
         "n_scored": 6,
         "recall@5": 1.0,
         "recall@20": 1.0,
@@ -169,7 +235,15 @@
         "n_controls": 0,
         "false_positive_rate": null
       },
-      "prod": {
+      "prod_current": {
+        "n_scored": 6,
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "mrr": 0.9167,
+        "n_controls": 0,
+        "false_positive_rate": null
+      },
+      "prod_merged_candidate": {
         "n_scored": 6,
         "recall@5": 1.0,
         "recall@20": 1.0,
@@ -210,7 +284,7 @@
         "sa-creative-rules.md",
         "orgs/cortex/knowledge.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 1.0,
@@ -223,7 +297,20 @@
           "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/ad-copy/ad-creatives-young-adults.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-target-audience.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Client Playbook.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 1.0,
@@ -246,7 +333,7 @@
       "expected_sources": [
         "sa-creative-rules.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 0.25,
@@ -259,7 +346,20 @@
           "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-target-audience.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 0.5,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-target-audience.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Competitors.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 0.5,
@@ -283,7 +383,7 @@
         "sa-target-audience.md",
         "orgs/cortex/knowledge.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 1.0,
@@ -296,7 +396,20 @@
           "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/marketing/google-execution-packet.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-target-audience.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Chicago Market.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Business Rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 1.0,
@@ -319,7 +432,7 @@
       "expected_sources": [
         "orgs/cortex/knowledge.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 0.5,
@@ -332,7 +445,20 @@
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/marketing/memory/2026-05-30.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Chicago Market.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/fleet-operational-doctrine.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Ad Strategy.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 1.0,
@@ -355,7 +481,7 @@
       "expected_sources": [
         "orgs/cortex/knowledge.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 1.0,
@@ -368,7 +494,20 @@
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/analyst/GUARDRAILS.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Pricing/2026-04-23 Marketplace Intelligence Layer Audit - Pass 2 Analyst Review.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/experiments/marketing-agent-spec.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/MEMORY_ARCHITECTURE.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 1.0,
@@ -391,7 +530,7 @@
       "expected_sources": [
         "sa-creative-rules.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 0.5,
@@ -404,7 +543,20 @@
           "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 1.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-target-audience.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Competitors.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 1.0,
@@ -427,7 +579,7 @@
       "expected_sources": [
         "agents/scribe/memory/2026-06-16.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 0.0,
         "recall@20": 0.0,
         "rr": 0.034482758620689655,
@@ -440,7 +592,20 @@
           "/Users/loganbronstein/Sale Advisor/Vault/Launch Plan.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.1111111111111111,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Ad Strategy.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Chicago Market.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 0.0,
         "recall@20": 1.0,
         "rr": 0.1111111111111111,
@@ -463,20 +628,33 @@
       "expected_sources": [
         "agents/scribe/memory/2026-06-16.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 1.0,
         "recall@20": 1.0,
-        "rr": 0.5,
+        "rr": 0.3333333333333333,
         "false_positive": null,
         "top5": [
           "/private/tmp/ig_reels_corpus.md",
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/content/video-production-shot-list.md",
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-16.md",
           "/Users/loganbronstein/Sale Advisor/Vault/Daily Notes/2026-04-20.md",
-          "/Users/loganbronstein/Sale Advisor/Vault/Marketing Intel/Reel Hook Analysis.md",
-          "/Users/loganbronstein/Sale Advisor/Vault/Marketing Intel/Video Techniques.md"
+          "/Users/loganbronstein/Sale Advisor/Vault/Marketing Intel/Reel Hook Analysis.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.125,
+        "false_positive": null,
+        "top5": [
+          "/private/tmp/ig_reels_corpus.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/analyst/scripts/test-precompact-hook-report.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 0.5,
@@ -499,7 +677,7 @@
       "expected_sources": [
         "agents/boss/MEMORY.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 0.3333333333333333,
@@ -512,7 +690,20 @@
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-06-10.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.1111111111111111,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Sorzo/2026-04-23 Sorzo Context Tree Audit - Pass 3 Final Reconciliation.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Pricing/2026-04-23 Pricer State After Revert.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Pricing/2026-04-22 Fix 1 Collectibles Source Routing Measured Delta.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Pricing/2026-04-23 Marketplace Intelligence Layer Audit - Pass 2 Analyst Review.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Sorzo/2026-04-23 Sorzo Context Tree Audit - Pass 2 Adversarial Analyst.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 1.0,
@@ -536,7 +727,7 @@
         "agents/boss/MEMORY.md",
         "agents/scribe/memory/2026-06-16.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 0.0,
         "recall@20": 1.0,
         "rr": 0.125,
@@ -549,7 +740,20 @@
           "/Users/loganbronstein/Sale Advisor/Vault/Marketing/Brand Foundation/2026-04-27 Subtle Motion Models Survey.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.058823529411764705,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Client Playbook.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Business Rules.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/analyst/scripts/test-precompact-hook-report.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/fleet-operational-doctrine.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 0.0,
         "recall@20": 1.0,
         "rr": 0.125,
@@ -572,7 +776,7 @@
       "expected_sources": [
         "agents/scribe/MEMORY.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 0.0,
         "recall@20": 1.0,
         "rr": 0.1111111111111111,
@@ -585,7 +789,20 @@
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-05.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.07692307692307693,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/analyst/experiments/sa-error-patterns-and-thresholds.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/fleet-operational-doctrine.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Pricing/2026-04-23 Marketplace Intelligence Layer Audit - Pass 2 Analyst Review.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Pricing/2026-04-23 Stacked Fix-1-2-3 Delta + Regression Flag.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/analyst/scripts/test-precompact-hook-report.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 0.0,
         "recall@20": 1.0,
         "rr": 0.16666666666666666,
@@ -608,7 +825,7 @@
       "expected_sources": [
         "agents/scribe/MEMORY.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 1.0,
@@ -621,7 +838,20 @@
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-16.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.1111111111111111,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/MEMORY_ARCHITECTURE.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Pricing/2026-04-23 Marketplace Intelligence Layer Audit - Pass 2 Analyst Review.md",
+          "/private/tmp/ig_reels_corpus.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/MEMORY_ARCHITECTURE_PHASE2_PLAN.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 1.0,
@@ -644,7 +874,7 @@
       "expected_sources": [
         "agents/scribe/MEMORY.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 0.5,
@@ -657,7 +887,20 @@
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-05-04.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.09090909090909091,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/MEMORY_ARCHITECTURE_PHASE2_PLAN.md",
+          "/private/tmp/ig_reels_corpus.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/MEMORY_ARCHITECTURE.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Sorzo/2026-04-23 Sorzo Context Tree Audit - Pass 3 Final Reconciliation.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/2026-04-22 Evaluate-Experiment Score Bug.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 0.5,
@@ -680,7 +923,7 @@
       "expected_sources": [
         "agents/marketing/MEMORY.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 0.0,
         "recall@20": 0.0,
         "rr": 0.0,
@@ -693,7 +936,20 @@
           "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/marketing/canonical-rulebook.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 0.0,
+        "recall@20": 0.0,
+        "rr": 0.0,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Business Rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Competitors.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 0.0,
         "recall@20": 0.0,
         "rr": 0.0,
@@ -716,20 +972,33 @@
       "expected_sources": [
         "agents/scribe/memory/2026-06-16.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 0.0,
         "recall@20": 1.0,
-        "rr": 0.0625,
+        "rr": 0.05555555555555555,
         "false_positive": null,
         "top5": [
           "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/content/video-production-shot-list.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Marketing/Brand Foundation/2026-04-28 GPT Image 2 Implementation Status + 30d Meta Review.md",
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-06-08.md",
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/marketing/memory/2026-04-28.md",
-          "/Users/loganbronstein/cortextos/orgs/cortex/agents/marketing/memory/2026-05-01.md",
-          "/Users/loganbronstein/cortextos/orgs/cortex/agents/marketing/memory/2026-06-02.md"
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/marketing/memory/2026-05-01.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.07692307692307693,
+        "false_positive": null,
+        "top5": [
+          "/private/tmp/ig_reels_corpus.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/analyst/scripts/test-precompact-hook-report.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Ad Strategy.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 0.5,
@@ -752,7 +1021,7 @@
       "expected_sources": [
         "agents/analyst/MEMORY.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 0.0,
         "recall@20": 1.0,
         "rr": 0.08333333333333333,
@@ -765,7 +1034,20 @@
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-15.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.09090909090909091,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/fleet-operational-doctrine.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Client Playbook.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Ad Strategy.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 0.5,
@@ -788,7 +1070,7 @@
       "expected_sources": [
         "agents/coder/MEMORY.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 0.0,
         "recall@20": 1.0,
         "rr": 0.09090909090909091,
@@ -801,7 +1083,20 @@
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-06-16.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.1111111111111111,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Pricing/2026-04-22 Fix 1 Collectibles Source Routing Measured Delta.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/analyst/scripts/test-precompact-hook-report.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Pricing/2026-04-23 Fix-2 Revert Recovery Confirmation.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Pricing/2026-04-23 Marketplace Intelligence Layer Audit - Pass 2 Analyst Review.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 1.0,
@@ -824,7 +1119,7 @@
       "expected_sources": [
         "agents/codex/MEMORY.md"
       ],
-      "all7": {
+      "all7_merged": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 0.3333333333333333,
@@ -837,7 +1132,20 @@
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/codex/memory/2026-05-14.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": 0.0,
+        "recall@20": 1.0,
+        "rr": 0.1,
+        "false_positive": null,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/fleet-operational-doctrine.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/MEMORY_ARCHITECTURE.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md",
+          "/private/tmp/ig_reels_corpus.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-target-audience.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": 1.0,
         "recall@20": 1.0,
         "rr": 1.0,
@@ -858,7 +1166,7 @@
       "collection": "any",
       "negative_control": true,
       "expected_sources": [],
-      "all7": {
+      "all7_merged": {
         "recall@5": null,
         "recall@20": null,
         "rr": null,
@@ -871,7 +1179,20 @@
           "/Users/loganbronstein/Sale Advisor/Vault/Marketing/Brand Foundation/2026-04-22 Brand Voice Distillation.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": null,
+        "recall@20": null,
+        "rr": null,
+        "false_positive": true,
+        "top5": [
+          "/Users/loganbronstein/Sale Advisor/Vault/Client Playbook.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-target-audience.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/sa-creative-rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Business Rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": null,
         "recall@20": null,
         "rr": null,
@@ -892,7 +1213,7 @@
       "collection": "any",
       "negative_control": true,
       "expected_sources": [],
-      "all7": {
+      "all7_merged": {
         "recall@5": null,
         "recall@20": null,
         "rr": null,
@@ -905,7 +1226,20 @@
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/coder/MEMORY.md"
         ]
       },
-      "prod": {
+      "prod_current": {
+        "recall@5": null,
+        "recall@20": null,
+        "rr": null,
+        "false_positive": true,
+        "top5": [
+          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Business Rules.md",
+          "/Users/loganbronstein/Sale Advisor/Vault/Chicago Market.md"
+        ]
+      },
+      "prod_merged_candidate": {
         "recall@5": null,
         "recall@20": null,
         "rr": null,
