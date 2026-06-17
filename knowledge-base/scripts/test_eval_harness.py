@@ -200,5 +200,85 @@ class TestProdCurrentFidelity(unittest.TestCase):
         self.assertFalse(eh.prod_current_fp(quiet, "agent-coder", cols, "shared-cortex", 0.5))
 
 
+class TestFixARowLevel(unittest.TestCase):
+    """Phase-1 Fix A: ROW-LEVEL no-dedup production-faithful A/B
+    (flag_off_rows = shared-first concat; flag_on_rows = merge-by-score)."""
+
+    def test_sort_by_score_stable_ties_keep_order_and_no_dedup(self):
+        rows = [("/x/shared1.md", 0.5), ("/x/agent1.md", 0.5),
+                ("/x/dup.md", 0.4), ("/x/hi.md", 0.9), ("/x/dup.md", 0.8)]
+        out = eh.sort_by_score_stable(rows)
+        self.assertEqual([p for p, _ in out],
+                         ["/x/hi.md", "/x/dup.md", "/x/shared1.md", "/x/agent1.md", "/x/dup.md"])
+        self.assertEqual(len(out), 5)  # no dedup: dup stays twice
+
+    def test_flag_off_is_shared_first_concat_no_sort(self):
+        by_col = {
+            "shared-cortex": [("/x/s_lo.md", 0.6), ("/x/below.md", 0.3)],
+            "agent-coder": [("/x/a_hi.md", 0.9)],
+        }
+        off = eh.fix_a_rows(by_col, "agent-coder", "shared-cortex", 0.5, merge=False)
+        # below-threshold dropped; shared FIRST, agent appended, NO sort
+        self.assertEqual([p for p, _ in off], ["/x/s_lo.md", "/x/a_hi.md"])
+
+    def test_flag_on_sorts_by_score_agent_above_shared(self):
+        by_col = {"shared-cortex": [("/x/s_lo.md", 0.6)], "agent-coder": [("/x/a_hi.md", 0.9)]}
+        on = eh.fix_a_rows(by_col, "agent-coder", "shared-cortex", 0.5, merge=True)
+        self.assertEqual([p for p, _ in on], ["/x/a_hi.md", "/x/s_lo.md"])
+
+    def test_flag_on_no_dedup_preserves_duplicate_rows(self):
+        by_col = {
+            "shared-cortex": [("/x/dup.md", 0.7)],
+            "agent-coder": [("/x/dup.md", 0.8), ("/x/b.md", 0.51)],
+        }
+        on = eh.fix_a_rows(by_col, "agent-coder", "shared-cortex", 0.5, merge=True)
+        self.assertEqual([p for p, _ in on], ["/x/dup.md", "/x/dup.md", "/x/b.md"])
+        self.assertEqual([s for _, s in on], [0.8, 0.7, 0.51])  # both dup rows kept
+
+    def test_recall_lift_off_vs_on_via_evaluate(self):
+        # Agent answer buried below 6 shared rows: OFF misses @5, ON recovers @5.
+        shared_rows = [("/x/shared/s%d.md" % i, 0.70 - i * 0.01) for i in range(6)]  # 6 shared >=0.5
+        eval_set = {
+            "version": "1.1-locked", "locked_at_utc": "z",
+            "queries": [
+                {"id": "q1", "tag": "VEC", "query": "agent answer",
+                 "expected_sources": ["agent-coder/answer.md"],
+                 "collection": "agent-coder", "negative_control": False},
+            ],
+        }
+
+        def fake(python, mmrag, collection, query, env, top_k=eh.TOP_K):
+            if collection == "shared-cortex":
+                return list(shared_rows)
+            if collection == "agent-coder":
+                return [("/x/agent-coder/answer.md", 0.95)]
+            return []
+
+        rep = eh.evaluate(eval_set, "py", "mmrag.py", {}, None, 0.5, query_fn=fake)
+        off = rep["aggregate"]["flag_off_rows"]
+        on = rep["aggregate"]["flag_on_rows"]
+        self.assertEqual(off["recall@5"], 0.0)   # answer is row 7, missed @5
+        self.assertEqual(off["recall@20"], 1.0)  # but retrievable @20
+        self.assertEqual(on["recall@5"], 1.0)    # merged: answer (0.95) is row 1
+        self.assertEqual(on["mrr"], 1.0)
+
+    def test_control_fp_reuses_reachable_path_check_for_both_flags(self):
+        eval_set = {
+            "version": "1.1-locked", "locked_at_utc": "z",
+            "queries": [
+                {"id": "c1", "tag": "VEC", "query": "should not match",
+                 "expected_sources": [], "collection": "any", "negative_control": True},
+            ],
+        }
+
+        def fake(python, mmrag, collection, query, env, top_k=eh.TOP_K):
+            return [("/x/agent-boss/x.md", 0.7)] if collection == "agent-boss" else []
+
+        rep = eh.evaluate(eval_set, "py", "mmrag.py", {}, None, 0.5, query_fn=fake)
+        # a confident hit on ANY reachable path is an FP for both flag states
+        self.assertEqual(rep["aggregate"]["flag_off_rows"]["false_positive_rate"], 1.0)
+        self.assertEqual(rep["aggregate"]["flag_on_rows"]["false_positive_rate"], 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,7 +37,10 @@ vi.mock('../../../src/utils/org.js', () => ({
   normalizeOrgName: (_root: string, org: string) => org,
 }));
 
-const { queryKnowledgeBase, ingestKnowledgeBase } = await import('../../../src/bus/knowledge-base.js');
+import type { KBQueryResult } from '../../../src/bus/knowledge-base.js';
+
+const { queryKnowledgeBase, ingestKnowledgeBase, mergeByScore, shouldMergeCollectionsByScore } =
+  await import('../../../src/bus/knowledge-base.js');
 
 // Minimal BusPaths stub — knowledge-base.ts doesn't actually USE the paths
 // object at call time, just the options/env it constructs.
@@ -194,5 +197,178 @@ describe('kb warn messages — UX invariants', () => {
     const specificOrgWarns = warnLog.filter((m) => m.includes('SpecificOrg'));
     expect(specificOrgWarns.length).toBeGreaterThanOrEqual(2);
     expect(specificOrgWarns.every((m) => /run setup/i.test(m))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase-1 "Fix A": query-layer merge of shared + agent-private by similarity.
+// ---------------------------------------------------------------------------
+
+const mkResult = (source: string, score: number): KBQueryResult => ({
+  content: `content:${source}`,
+  source_file: source,
+  org: 'TestOrg',
+  score,
+  doc_type: 'markdown',
+});
+
+describe('mergeByScore — pure cross-collection ranking', () => {
+  it('sorts rows by score descending', () => {
+    const out = mergeByScore([mkResult('a', 0.3), mkResult('b', 0.9), mkResult('c', 0.6)]);
+    expect(out.map((r) => r.source_file)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('preserves original (shared-first) order on ties via index decoration', () => {
+    const inp = [mkResult('shared1', 0.5), mkResult('agent1', 0.5), mkResult('shared2', 0.5)];
+    expect(mergeByScore(inp).map((r) => r.source_file)).toEqual(['shared1', 'agent1', 'shared2']);
+  });
+
+  it('does NOT dedup — a doc\'s duplicate chunks are preserved', () => {
+    const out = mergeByScore([mkResult('dup', 0.4), mkResult('x', 0.9), mkResult('dup', 0.8)]);
+    expect(out.map((r) => r.source_file)).toEqual(['x', 'dup', 'dup']);
+    expect(out).toHaveLength(3);
+  });
+
+  it('does NOT change the result count and returns a new array', () => {
+    const inp = [mkResult('a', 0.1), mkResult('b', 0.2)];
+    const out = mergeByScore(inp);
+    expect(out).toHaveLength(2);
+    expect(out).not.toBe(inp);
+  });
+
+  it('handles empty input', () => {
+    expect(mergeByScore([])).toEqual([]);
+  });
+});
+
+describe('shouldMergeCollectionsByScore — fail-safe flag read', () => {
+  const env = { MMRAG_CONFIG: '/x/knowledge-base/config.json' } as Record<string, string>;
+
+  it('true ONLY when the key is the boolean true', () => {
+    fsMocks.readFileSync.mockReturnValue('{"merge_collections_by_score": true}');
+    expect(shouldMergeCollectionsByScore(env)).toBe(true);
+  });
+
+  it('false when the key is false', () => {
+    fsMocks.readFileSync.mockReturnValue('{"merge_collections_by_score": false}');
+    expect(shouldMergeCollectionsByScore(env)).toBe(false);
+  });
+
+  it('false when the key is absent (normal default config)', () => {
+    fsMocks.readFileSync.mockReturnValue('{"similarity_threshold": 0.5}');
+    expect(shouldMergeCollectionsByScore(env)).toBe(false);
+  });
+
+  it('false on a non-boolean truthy value (e.g. the string "true")', () => {
+    fsMocks.readFileSync.mockReturnValue('{"merge_collections_by_score": "true"}');
+    expect(shouldMergeCollectionsByScore(env)).toBe(false);
+  });
+
+  it('false on malformed JSON, never throws', () => {
+    fsMocks.readFileSync.mockReturnValue('not json {');
+    expect(() => shouldMergeCollectionsByScore(env)).not.toThrow();
+    expect(shouldMergeCollectionsByScore(env)).toBe(false);
+  });
+
+  it('false when the file is unreadable (readFileSync throws)', () => {
+    fsMocks.readFileSync.mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
+    expect(shouldMergeCollectionsByScore(env)).toBe(false);
+  });
+});
+
+describe('queryKnowledgeBase — Fix A wiring (flag gates the merge)', () => {
+  // existsSync true everywhere (configured KB); readFileSync returns the given
+  // config JSON for the config.json path, '' for .env/secrets.env.
+  function mockKbWithConfigContent(configContent: string): void {
+    fsMocks.existsSync.mockImplementation(() => true);
+    fsMocks.readFileSync.mockImplementation((p: any) => {
+      const path = String(p);
+      if (path.endsWith('/knowledge-base/config.json')) return configContent;
+      return '';
+    });
+  }
+
+  // Return distinct mmrag --json output per collection by inspecting argv.
+  function mockCollectionResults(
+    byCollection: Record<string, Array<{ source: string; similarity: number }>>,
+  ): void {
+    execFileSyncMock.mockImplementation((_py: unknown, argv: unknown) => {
+      const args = argv as string[];
+      const ci = args.indexOf('--collection');
+      const col = ci >= 0 ? args[ci + 1] : '';
+      const results = (byCollection[col] || []).map((r) => ({
+        content: `content:${r.source}`,
+        similarity: r.similarity,
+        source: r.source,
+        type: 'markdown',
+      }));
+      return JSON.stringify({ results });
+    });
+  }
+
+  // shared returns lower-scored hits, agent returns the single highest-scored.
+  const SHARED_AND_AGENT = {
+    'shared-TestOrg': [
+      { source: 'shared-a.md', similarity: 0.6 },
+      { source: 'shared-b.md', similarity: 0.55 },
+    ],
+    'agent-tester': [{ source: 'agent-hi.md', similarity: 0.9 }],
+  };
+
+  it('flag TRUE: scope=all ranks shared+agent by score — agent hit surfaces above shared', () => {
+    mockKbWithConfigContent('{"merge_collections_by_score": true}');
+    mockCollectionResults(SHARED_AND_AGENT);
+
+    const result = queryKnowledgeBase(dummyPaths, 'q', baseOptions);
+
+    expect(result.results.map((r) => r.source_file)).toEqual(['agent-hi.md', 'shared-a.md', 'shared-b.md']);
+    expect(result.total).toBe(3); // count unchanged
+  });
+
+  it('flag FALSE: scope=all keeps the shared-first concat order (today\'s behavior)', () => {
+    mockKbWithConfigContent('{"merge_collections_by_score": false}');
+    mockCollectionResults(SHARED_AND_AGENT);
+
+    const result = queryKnowledgeBase(dummyPaths, 'q', baseOptions);
+
+    expect(result.results.map((r) => r.source_file)).toEqual(['shared-a.md', 'shared-b.md', 'agent-hi.md']);
+    expect(result.total).toBe(3);
+  });
+
+  it('flag key ABSENT: defaults to concat order (no merge)', () => {
+    mockKbWithConfigContent('{"similarity_threshold": 0.5}');
+    mockCollectionResults(SHARED_AND_AGENT);
+
+    const result = queryKnowledgeBase(dummyPaths, 'q', baseOptions);
+
+    expect(result.results.map((r) => r.source_file)).toEqual(['shared-a.md', 'shared-b.md', 'agent-hi.md']);
+  });
+
+  it('MALFORMED config: fail-safe to concat order, never throws', () => {
+    mockKbWithConfigContent('not json {');
+    mockCollectionResults(SHARED_AND_AGENT);
+
+    let result!: ReturnType<typeof queryKnowledgeBase>;
+    expect(() => {
+      result = queryKnowledgeBase(dummyPaths, 'q', baseOptions);
+    }).not.toThrow();
+    expect(result.results.map((r) => r.source_file)).toEqual(['shared-a.md', 'shared-b.md', 'agent-hi.md']);
+  });
+
+  it('scope=shared (single collection): flag TRUE has no effect — order untouched', () => {
+    mockKbWithConfigContent('{"merge_collections_by_score": true}');
+    // Returned out of score order on purpose; a merge WOULD re-sort to [hi, lo].
+    mockCollectionResults({
+      'shared-TestOrg': [
+        { source: 'lo.md', similarity: 0.5 },
+        { source: 'hi.md', similarity: 0.9 },
+      ],
+    });
+
+    const result = queryKnowledgeBase(dummyPaths, 'q', { ...baseOptions, scope: 'shared' });
+
+    expect(result.results.map((r) => r.source_file)).toEqual(['lo.md', 'hi.md']);
   });
 });

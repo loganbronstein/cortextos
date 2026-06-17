@@ -26,6 +26,16 @@ merge/re-sort. The three views are kept distinct; none is presented as another:
               (threshold 0) — a FUTURE query-layer target (rank shared and private
               together), shown as a CANDIDATE for comparison. NOT current prod.
 
+PHASE-1 FIX A A/B (the production-faithful lift measurement). Fix A changes the
+prod wrapper's scope=all combination from shared-first concat to merge-by-score,
+behind the `merge_collections_by_score` flag. Because the wrapper concatenates
+ROWS and never dedups, the faithful A/B is ROW-LEVEL no-dedup at the prod 0.5
+threshold (NOT the source-level deduped views above, which are kept only as
+labeled references / Phase-0 continuity):
+  flag_off_rows : filter@0.5 -> shared rows ++ agent rows (shared first), no sort
+  flag_on_rows  : same rows -> stable score-desc sort (Fix A)
+The Phase-1 lift claim is flag_on_rows vs flag_off_rows ONLY.
+
 MATCHING (scribe 2026-06-17): expected_sources are PATH-SUFFIX FRAGMENTS that are
   substring-matched against the FULL source path — NOT basenames — because
   `MEMORY.md` collides across all 6 agents (agents/boss/MEMORY.md vs
@@ -154,6 +164,31 @@ def prod_current_fp(by_col: dict, col, collections: list[str], shared: str, thre
     return hit(shared)
 
 
+def sort_by_score_stable(rows: list[tuple[str, float]]) -> list[tuple[str, float]]:
+    """Stable score-DESC sort matching the TS wrapper mergeByScore (Fix A flag ON):
+    ties keep original (shared-first) order via explicit index decoration, NOT by
+    relying on sort stability. NO dedup — duplicate-source rows are preserved."""
+    decorated = list(enumerate(rows))
+    decorated.sort(key=lambda d: (-d[1][1], d[0]))
+    return [r for _, r in decorated]
+
+
+def fix_a_rows(by_col: dict, col, shared: str, threshold: float, merge: bool) -> list[tuple[str, float]]:
+    """ROW-LEVEL (NO dedup) prod view for Phase-1 Fix A — the production-faithful
+    A/B basis (the wrapper concatenates rows and never dedups):
+      flag OFF (merge=False): filter@threshold -> shared rows ++ agent rows
+                              (shared first), NO re-sort  (= today's prod ordering)
+      flag ON  (merge=True):  same rows -> stable score-desc sort  (= Fix A)
+    A `shared-cortex` / `any` query has no agent path -> shared rows only (its
+    recall is None for controls; its FP is computed via prod_current_fp)."""
+    def keep(c):
+        return [(p, s) for p, s in by_col.get(c, []) if s >= threshold]
+    rows = keep(shared)
+    if isinstance(col, str) and col.startswith("agent-"):
+        rows = rows + keep(col)
+    return sort_by_score_stable(rows) if merge else rows
+
+
 def ranked_paths(merged: list[tuple[str, float]]) -> list[str]:
     return [p for p, _ in merged]
 
@@ -250,8 +285,10 @@ def _collections(eval_set: dict) -> list[str]:
     return DEFAULT_COLLECTIONS
 
 
-# The three retrieval views (see module docstring). Order = report order.
-VIEWS = ("all7_merged", "prod_current", "prod_merged_candidate")
+# Retrieval views (see module docstring). Order = report order.
+# Phase-1 Fix A headline = the row-level no-dedup A/B (flag_off_rows vs
+# flag_on_rows). The rest are labeled REFERENCES (source-level / corpus-wide).
+VIEWS = ("flag_off_rows", "flag_on_rows", "all7_merged", "prod_current", "prod_merged_candidate")
 
 
 def evaluate(eval_set: dict, python: str, mmrag: str, base_env: dict,
@@ -276,19 +313,32 @@ def evaluate(eval_set: dict, python: str, mmrag: str, base_env: dict,
         all7_merged = merge_ranked(list(by_col.values()))
 
         # View 2 — PROD_CURRENT: EXACT wrapper (shared-first concat @ prod threshold,
-        # no re-sort). FP for negative controls computed across reachable paths.
+        # no re-sort, source-level dedup-preserving-order). FP for negative controls
+        # computed across reachable paths. Kept as a labeled REFERENCE.
         prod_current = prod_current_ranked(by_col, col, PROD_SHARED, prod_threshold)
         pc_fp = prod_current_fp(by_col, col, collections, PROD_SHARED, prod_threshold) if negative else None
 
         # View 3 — PROD_MERGED_CANDIDATE: shared + agent MERGED by sim (threshold 0),
-        # a future query-layer target (NOT current prod).
+        # source-level. A future ceiling reference (NOT current prod, NOT Fix A).
         cand_cols = [PROD_SHARED] + ([col] if isinstance(col, str) and col.startswith("agent-") else [])
         prod_merged_candidate = merge_ranked([by_col.get(c, []) for c in cand_cols])
+
+        # Phase-1 FIX A headline A/B — ROW-LEVEL, NO dedup, prod threshold 0.5,
+        # production-faithful (the wrapper concatenates rows and never dedups):
+        #   flag_off_rows = shared-first concat, no re-sort (today's prod ordering)
+        #   flag_on_rows  = same rows, stable score-desc sort (Fix A)
+        # FP is identical for both (sort/dedup don't change whether a confident
+        # row exists) -> reuse the reachable-path control FP.
+        flag_off_rows = fix_a_rows(by_col, col, PROD_SHARED, prod_threshold, merge=False)
+        flag_on_rows = fix_a_rows(by_col, col, PROD_SHARED, prod_threshold, merge=True)
+        rows_fp = pc_fp
 
         per_query.append({
             "id": q.get("id"), "tag": q.get("tag"), "query": q["query"],
             "collection": col, "negative_control": negative,
             "expected_sources": fragments,
+            "flag_off_rows": _query_block(flag_off_rows, fragments, negative, prod_threshold, fp=rows_fp),
+            "flag_on_rows": _query_block(flag_on_rows, fragments, negative, prod_threshold, fp=rows_fp),
             "all7_merged": _query_block(all7_merged, fragments, negative, prod_threshold),
             "prod_current": _query_block(prod_current, fragments, negative, prod_threshold, fp=pc_fp),
             "prod_merged_candidate": _query_block(prod_merged_candidate, fragments, negative, prod_threshold),
@@ -365,9 +415,11 @@ def _misses(per_query) -> list:
 
 
 VIEW_LABELS = {
+    "flag_off_rows": "FLAG OFF (prod today) — shared-first concat, ROW-LEVEL no-dedup, threshold 0.5",
+    "flag_on_rows": "FLAG ON (Fix A) — merged by score, ROW-LEVEL no-dedup, threshold 0.5",
     "all7_merged": "ALL-7 MERGED — corpus-wide RETRIEVABILITY REFERENCE (threshold 0, NOT prod)",
-    "prod_current": "PROD_CURRENT — real wrapper (shared-first concat, threshold 0.5, no re-sort)",
-    "prod_merged_candidate": "PROD_MERGED_CANDIDATE — future query-layer target (merged, threshold 0), NOT prod",
+    "prod_current": "PROD_CURRENT (ref) — wrapper concat, SOURCE-LEVEL dedup (= locked Phase-0 0.33)",
+    "prod_merged_candidate": "PROD_MERGED_CANDIDATE (ref) — source-level merge, threshold 0 (ceiling)",
 }
 
 
@@ -389,12 +441,12 @@ def print_report(report: dict) -> None:
         print(f"\n[{VIEW_LABELS[view]}]\n  n={a['n_scored']} scored / {a['n_controls']} controls")
         print(f"  Recall@5={a['recall@5']}  Recall@20={a['recall@20']}  MRR={a['mrr']}  "
               f"FP-rate={a['false_positive_rate']}")
-    print("\nPer-collection (PROD_CURRENT real / ALL-7 reference):")
+    print("\nPer-collection FIX A A/B (flag OFF -> flag ON, row-level @0.5):")
     for c, b in report["per_collection"].items():
-        pc, ref = b["prod_current"], b["all7_merged"]
-        print(f"  {c:16s} n={pc['n_scored']:2d}  "
-              f"prod R@5={pc['recall@5']} R@20={pc['recall@20']} MRR={pc['mrr']}  |  "
-              f"ref R@5={ref['recall@5']} R@20={ref['recall@20']} MRR={ref['mrr']}")
+        off, on = b["flag_off_rows"], b["flag_on_rows"]
+        print(f"  {c:16s} n={off['n_scored']:2d}  "
+              f"OFF R@5={off['recall@5']} R@20={off['recall@20']} MRR={off['mrr']}  ->  "
+              f"ON R@5={on['recall@5']} R@20={on['recall@20']} MRR={on['mrr']}")
     misses = report["misses"]
     if misses:
         print(f"\n⚠ {len(misses)} EXPECTED-SOURCE MISS(ES) (recall@20==0 — fix mapping or re-ingest):")

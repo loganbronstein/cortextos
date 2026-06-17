@@ -66,6 +66,28 @@ function kbConfigured(env: Record<string, string>): boolean {
 }
 
 /**
+ * Read the `merge_collections_by_score` feature flag from the KB runtime config
+ * (MMRAG_CONFIG). Phase-1 "Fix A": when true, a scope=all query ranks the shared
+ * and agent-private collections TOGETHER by similarity instead of concatenating
+ * shared-first (which buries agent-private hits below shared ones — measured prod
+ * Recall@5 = 0.0 for agent-scoped queries).
+ *
+ * Fail-safe: returns false on a missing file, unreadable file, invalid JSON, a
+ * missing key, or any non-`true` value. Default-off; a normal absent key is NOT
+ * an error and produces no warning (unlike the kbConfigured missing-config path).
+ */
+export function shouldMergeCollectionsByScore(env: Record<string, string>): boolean {
+  try {
+    const cfg = JSON.parse(readFileSync(env.MMRAG_CONFIG, 'utf-8')) as {
+      merge_collections_by_score?: unknown;
+    };
+    return cfg.merge_collections_by_score === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Build the full env object needed by mmrag.py calls.
  */
 function buildKBEnv(
@@ -109,6 +131,27 @@ export interface KBQueryResponse {
   total: number;
   query: string;
   collection: string;
+}
+
+/**
+ * Phase-1 "Fix A" — rank cross-collection results by similarity.
+ *
+ * The production wrapper queries shared-<org> then agent-<name> and concatenates
+ * the rows shared-first with no re-sort, so an agent-private hit always lands
+ * below every shared hit even when it is far more relevant. This re-orders the
+ * already-collected rows by descending score so the most relevant surface first,
+ * regardless of which collection produced them.
+ *
+ * Deliberately surgical: ONLY re-orders. No dedup (a doc's multiple chunks are
+ * preserved exactly as today) and no change to the result count. Ties keep their
+ * original (shared-first) order via explicit index decoration, not by relying on
+ * Array.prototype.sort stability.
+ */
+export function mergeByScore(results: KBQueryResult[]): KBQueryResult[] {
+  return results
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => b.r.score - a.r.score || a.i - b.i)
+    .map((d) => d.r);
 }
 
 /**
@@ -221,6 +264,14 @@ export function queryKnowledgeBase(
       const output = runQuery(col);
       allResults = allResults.concat(parseOutput(output));
       lastCollection = col;
+    }
+
+    // Phase-1 "Fix A": when the flag is on, rank shared + agent-private together
+    // by similarity instead of leaving them shared-first concatenated. Only fires
+    // for multi-collection scope=all; shared/private (single collection) are
+    // already a single ranked list and stay byte-identical to today.
+    if (collections.length > 1 && shouldMergeCollectionsByScore(env)) {
+      allResults = mergeByScore(allResults);
     }
 
     if (allResults.length > 0) {
