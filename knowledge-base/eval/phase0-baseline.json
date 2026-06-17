@@ -18,17 +18,17 @@
   "aggregate": {
     "all7": {
       "n_scored": 18,
-      "recall@5": 0.5556,
-      "recall@20": 0.8333,
-      "mrr": 0.3911,
+      "recall@5": 0.6111,
+      "recall@20": 0.8889,
+      "mrr": 0.4124,
       "n_controls": 2,
       "false_positive_rate": 1.0
     },
     "prod": {
       "n_scored": 18,
       "recall@5": 0.7778,
-      "recall@20": 0.8889,
-      "mrr": 0.6662,
+      "recall@20": 0.9444,
+      "mrr": 0.6613,
       "n_controls": 2,
       "false_positive_rate": 1.0
     }
@@ -126,18 +126,18 @@
     },
     "agent-scribe": {
       "all7": {
-        "n_scored": 4,
+        "n_scored": 6,
         "recall@5": 0.5,
-        "recall@20": 1.0,
-        "mrr": 0.4444,
+        "recall@20": 0.8333,
+        "mrr": 0.368,
         "n_controls": 0,
         "false_positive_rate": null
       },
       "prod": {
-        "n_scored": 4,
-        "recall@5": 0.75,
+        "n_scored": 6,
+        "recall@5": 0.6667,
         "recall@20": 1.0,
-        "mrr": 0.6667,
+        "mrr": 0.463,
         "n_controls": 0,
         "false_positive_rate": null
       }
@@ -162,18 +162,18 @@
     },
     "shared-cortex": {
       "all7": {
-        "n_scored": 8,
-        "recall@5": 0.75,
-        "recall@20": 0.75,
-        "mrr": 0.5369,
+        "n_scored": 6,
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "mrr": 0.7083,
         "n_controls": 0,
         "false_positive_rate": null
       },
       "prod": {
-        "n_scored": 8,
-        "recall@5": 0.875,
-        "recall@20": 0.875,
-        "mrr": 0.7125,
+        "n_scored": 6,
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "mrr": 0.9167,
         "n_controls": 0,
         "false_positive_rate": null
       }
@@ -184,18 +184,9 @@
       "id": "q07",
       "tag": "LEX",
       "query": "Aleric Heck AdOutreach",
-      "collection": "shared-cortex",
+      "collection": "agent-scribe",
       "expected_sources": [
-        "sa-creative-rules.md"
-      ]
-    },
-    {
-      "id": "q08",
-      "tag": "LEX",
-      "query": "reel DZn45Q2OrqA",
-      "collection": "shared-cortex",
-      "expected_sources": [
-        "sa-creative-rules.md"
+        "agents/scribe/memory/2026-06-16.md"
       ]
     },
     {
@@ -431,15 +422,15 @@
       "id": "q07",
       "tag": "LEX",
       "query": "Aleric Heck AdOutreach",
-      "collection": "shared-cortex",
+      "collection": "agent-scribe",
       "negative_control": false,
       "expected_sources": [
-        "sa-creative-rules.md"
+        "agents/scribe/memory/2026-06-16.md"
       ],
       "all7": {
         "recall@5": 0.0,
         "recall@20": 0.0,
-        "rr": 0.045454545454545456,
+        "rr": 0.034482758620689655,
         "false_positive": null,
         "top5": [
           "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/marketing/google-execution-packet.md",
@@ -450,9 +441,9 @@
         ]
       },
       "prod": {
-        "recall@5": 1.0,
+        "recall@5": 0.0,
         "recall@20": 1.0,
-        "rr": 0.2,
+        "rr": 0.1111111111111111,
         "false_positive": null,
         "top5": [
           "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md",
@@ -467,15 +458,15 @@
       "id": "q08",
       "tag": "LEX",
       "query": "reel DZn45Q2OrqA",
-      "collection": "shared-cortex",
+      "collection": "agent-scribe",
       "negative_control": false,
       "expected_sources": [
-        "sa-creative-rules.md"
+        "agents/scribe/memory/2026-06-16.md"
       ],
       "all7": {
-        "recall@5": 0.0,
-        "recall@20": 0.0,
-        "rr": 0.0,
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 0.5,
         "false_positive": null,
         "top5": [
           "/private/tmp/ig_reels_corpus.md",
@@ -486,16 +477,16 @@
         ]
       },
       "prod": {
-        "recall@5": 0.0,
-        "recall@20": 0.0,
-        "rr": 0.0,
+        "recall@5": 1.0,
+        "recall@20": 1.0,
+        "rr": 0.5,
         "false_positive": null,
         "top5": [
           "/private/tmp/ig_reels_corpus.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-16.md",
           "/Users/loganbronstein/Sale Advisor/Vault/Research/Conversations/2026-04-22 Bradley Banner Networking + Fundraising.md",
-          "/Users/loganbronstein/cortextos/orgs/cortex/knowledge.md",
-          "/Users/loganbronstein/cortextos/orgs/cortex/agents/analyst/scripts/test-precompact-hook-report.md",
-          "/Users/loganbronstein/Sale Advisor/Vault/Brand Guide.md"
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-05.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-15.md"
         ]
       }
     },
@@ -728,10 +719,10 @@
       "all7": {
         "recall@5": 0.0,
         "recall@20": 1.0,
-        "rr": 0.16666666666666666,
+        "rr": 0.0625,
         "false_positive": null,
         "top5": [
-          "/Users/loganbronstein/Sale Advisor/Vault/Marketing/Brand Foundation/2026-04-28 GPT Image 2 Implementation Status + 30d Meta Review.md",
+          "/Users/loganbronstein/Sale Advisor/Website/Marketing Docs/content/video-production-shot-list.md",
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/boss/memory/2026-06-08.md",
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/marketing/memory/2026-04-28.md",
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/marketing/memory/2026-05-01.md",
@@ -741,11 +732,11 @@
       "prod": {
         "recall@5": 1.0,
         "recall@20": 1.0,
-        "rr": 1.0,
+        "rr": 0.5,
         "false_positive": null,
         "top5": [
-          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-16.md",
           "/private/tmp/ig_reels_corpus.md",
+          "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-16.md",
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-09.md",
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-05.md",
           "/Users/loganbronstein/cortextos/orgs/cortex/agents/scribe/memory/2026-06-10.md"
