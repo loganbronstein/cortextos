@@ -90,7 +90,8 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
   "text_chunk_overlap": 200,
   "similarity_threshold": 0.5,
   "default_collection": "shared",
-  "merge_collections_by_score": false
+  "merge_collections_by_score": false,
+  "hybrid_search": false
 }
 EOF
   echo "  [OK] mmrag config.json created"
