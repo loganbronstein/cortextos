@@ -239,7 +239,7 @@ export function queryKnowledgeBase(
     if (jsonStart === -1) return [];
     try {
       const raw = JSON.parse(trimmed.slice(jsonStart)) as {
-        results?: Array<{ content?: string; result?: string; similarity?: number; source?: string; type?: string }>;
+        results?: Array<{ content?: string; result?: string; similarity?: number; rank_score?: number; source?: string; type?: string }>;
         result_count?: number;
         query?: string;
         collection?: string;
@@ -249,7 +249,10 @@ export function queryKnowledgeBase(
         source_file: r.source || '',
         org,
         agent_name: agent,
-        score: r.similarity ?? 0,
+        // Phase-2 hybrid ranking-key contract: order by rank_score (= RRF when
+        // hybrid_search is on, = similarity otherwise); fall back to similarity for
+        // non-hybrid / older mmrag output. mergeByScore (Fix A) sorts by this `score`.
+        score: r.rank_score ?? r.similarity ?? 0,
         doc_type: r.type || 'markdown',
       }));
     } catch {

@@ -278,6 +278,36 @@ describe('shouldMergeCollectionsByScore — fail-safe flag read', () => {
   });
 });
 
+describe('queryKnowledgeBase — Phase-2 hybrid ranking-key (rank_score) parse', () => {
+  it('sources score from rank_score when present (so hybrid RRF controls ordering)', () => {
+    fsMocks.existsSync.mockImplementation(() => true);
+    fsMocks.readFileSync.mockImplementation(() => '');
+    // mmrag returns rank_score DIFFERENT from similarity; the wrapper must use rank_score.
+    execFileSyncMock.mockReturnValue(
+      JSON.stringify({
+        results: [
+          { content: 'a', similarity: 0.9, rank_score: 0.01, source: 'a.md', type: 'markdown' },
+          { content: 'b', similarity: 0.2, rank_score: 0.03, source: 'b.md', type: 'markdown' },
+        ],
+      }),
+    );
+    const result = queryKnowledgeBase(dummyPaths, 'q', { ...baseOptions, scope: 'shared' });
+    const byId = Object.fromEntries(result.results.map((r) => [r.source_file, r.score]));
+    expect(byId['a.md']).toBe(0.01); // rank_score, NOT similarity 0.9
+    expect(byId['b.md']).toBe(0.03);
+  });
+
+  it('falls back to similarity when rank_score absent (back-compat / non-hybrid)', () => {
+    fsMocks.existsSync.mockImplementation(() => true);
+    fsMocks.readFileSync.mockImplementation(() => '');
+    execFileSyncMock.mockReturnValue(
+      JSON.stringify({ results: [{ content: 'a', similarity: 0.77, source: 'a.md', type: 'markdown' }] }),
+    );
+    const result = queryKnowledgeBase(dummyPaths, 'q', { ...baseOptions, scope: 'shared' });
+    expect(result.results[0].score).toBe(0.77);
+  });
+});
+
 describe('queryKnowledgeBase — Fix A wiring (flag gates the merge)', () => {
   // existsSync true everywhere (configured KB); readFileSync returns the given
   // config JSON for the config.json path, '' for .env/secrets.env.
