@@ -16,6 +16,10 @@ export default defineConfig({
   test: {
     globals: true,
     testTimeout: 10000,
+    // Scrub CTX_* env vars before each test file so the suite is isolated from any
+    // agent-session environment (otherwise leaked CTX_* trips the CLI sandbox guard and
+    // fails ~33 tests when `npm test` runs inside an agent session). See the setup file.
+    setupFiles: ['./tests/setup/scrub-ctx-env.ts'],
     include: [
       'tests/**/*.test.ts',
       'dashboard/src/**/__tests__/**/*.test.ts',
