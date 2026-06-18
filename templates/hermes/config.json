@@ -15,15 +15,10 @@
     ],
     "never_ask": []
   },
-  "crons": [
-    {
-      "name": "heartbeat",
-      "type": "recurring",
-      "interval": "4h",
-      "prompt": "Read HEARTBEAT.md and follow its instructions. Update your heartbeat, check inbox, and work on your highest priority task."
-    }
-  ],
-  "model": "{{model}}",
+  "crons": [],
+  "_crons_note": "Hermes manages crons natively (hermes cron). The cortextOS daemon SKIPS its external scheduler for runtime=hermes, so cortextOS-style crons here would be dead/misleading. The recurring heartbeat is a Hermes-native --no-agent cron that runs cortextos bus update-heartbeat (see HEARTBEAT.md / AGENTS.md).",
+  "model": "",
+  "_model_note": "Hermes selects its own model via ~/.hermes config.yaml (`hermes model`); HermesPTY passes no --model. cortextOS does not set the model for this runtime.",
   "ctx_warning_threshold": 60,
   "ctx_handoff_threshold": 70
 }

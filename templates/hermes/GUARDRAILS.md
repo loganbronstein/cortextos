@@ -1,6 +1,6 @@
 # Guardrails
 
-Read this file on every session start. Full reference: `.claude/skills/guardrails-reference/SKILL.md`
+Read this file on every session start. The red-flag tables below are self-contained.
 
 ---
 
@@ -22,7 +22,7 @@ Read this file on every session start. Full reference: `.claude/skills/guardrail
 | Blocked on something | "I'll wait and see" | Create a blocker task or escalate to orchestrator immediately. Silent blockers are invisible. |
 | Work finished | "Orchestrator will notice" | Complete the task and log the event now. Unlogged completions don't exist. |
 
-For the complete red flag table (15 patterns), see `.claude/skills/guardrails-reference/SKILL.md`.
+The tables above cover the core patterns; extend them in this file as you discover new ones.
 
 ---
 
@@ -34,13 +34,13 @@ For the complete red flag table (15 patterns), see `.claude/skills/guardrails-re
    ```bash
    cortextos bus log-event action guardrail_triggered info --meta '{"guardrail":"<which one>","context":"<what happened>"}'
    ```
-4. **When you discover a new pattern**: Add a new row to the table in `.claude/skills/guardrails-reference/SKILL.md`. The file improves over time.
+4. **When you discover a new pattern**: Add a new row to the table in this file (GUARDRAILS.md). It improves over time.
 
 ---
 
 ## Adding Guardrails
 
-If you catch yourself almost skipping something important that isn't in the table, add it to the skill file. Format:
+If you catch yourself almost skipping something important that isn't in the table, add it to this file. Format:
 
 | Trigger | Red Flag Thought | Required Action |
 |---------|-----------------|-----------------|
