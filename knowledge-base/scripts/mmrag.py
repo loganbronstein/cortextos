@@ -1278,6 +1278,91 @@ def cmd_fts_build(args):
     print(f"Done. FTS sidecar built: {total} chunk(s) across {len(names)} collection(s) -> {FTS_DB}")
 
 
+RRF_K = 60  # Reciprocal Rank Fusion constant (standard).
+
+
+def _cosine(a, b):
+    """Cosine similarity of two vectors (for hydrating BM25-only hits' display sim)."""
+    import math
+    if a is None or b is None or len(a) == 0 or len(b) == 0:
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def hybrid_fuse(vec_rows, bm25, threshold, collection, collection_name, query_embedding):
+    """Phase-2 RRF fusion of vector + BM25 rankings (codex-gated contract).
+
+    vec_rows: [{id, content, similarity, metadata, vrank(0-based)}] (all vector hits, pre-threshold).
+    bm25:     [(doc_id, brank(0-based))] from fts_search.
+    CANDIDATE = vector hit with similarity >= threshold OR any BM25 hit (BM25 bypasses the cosine
+    floor — that is how a strong lexical/low-cosine hit like q07 gets through). rank_score(d) =
+    sum 1/(RRF_K + rank) over the rankings d appears in. FTS-only candidates are hydrated from Chroma
+    (content/metadata + a computed cosine `similarity` for display); a sidecar doc_id absent from
+    Chroma is a stale row -> pruned + logged. Returns rows {id, content, similarity, metadata,
+    rank_score} sorted by rank_score desc."""
+    vec_by_id = {r["id"]: r for r in vec_rows}
+    bm25_rank = {doc_id: brank for doc_id, brank in bm25}
+
+    cand_ids = [r["id"] for r in vec_rows if r["similarity"] >= threshold]
+    seen = set(cand_ids)
+    for doc_id, _ in bm25:
+        if doc_id not in seen:
+            cand_ids.append(doc_id)
+            seen.add(doc_id)
+
+    # Hydrate BM25-only candidates not in the vector fetch.
+    missing = [d for d in cand_ids if d not in vec_by_id]
+    hydrated = {}
+    if missing:
+        got = collection.get(ids=missing, include=["documents", "metadatas", "embeddings"])
+        gids = got.get("ids") or []
+        embs = got.get("embeddings")
+        for i, gid in enumerate(gids):
+            emb = embs[i] if embs is not None and i < len(embs) else None
+            hydrated[gid] = {
+                "id": gid,
+                "content": got["documents"][i] if got.get("documents") else "",
+                "similarity": _cosine(query_embedding, emb),
+                "metadata": got["metadatas"][i] if got.get("metadatas") else {},
+            }
+        stale = [d for d in missing if d not in set(gids)]
+        if stale:
+            print(f"[hybrid] pruned {len(stale)} stale sidecar row(s) not in Chroma "
+                  f"(collection={collection_name})", file=sys.stderr)
+            try:
+                conn = fts_connect()
+                fts_delete_docs(conn, collection_name, stale)
+                conn.close()
+            except Exception as e:
+                print(f"[hybrid] WARNING: stale-row prune failed ({e})", file=sys.stderr)
+
+    fused = []
+    for doc_id in cand_ids:
+        base = vec_by_id.get(doc_id) or hydrated.get(doc_id)
+        if base is None:
+            continue  # stale + pruned
+        score = 0.0
+        vr = base.get("vrank")
+        if vr is not None:
+            score += 1.0 / (RRF_K + vr)
+        if doc_id in bm25_rank:
+            score += 1.0 / (RRF_K + bm25_rank[doc_id])
+        fused.append({
+            "id": doc_id,
+            "content": base["content"],
+            "similarity": base["similarity"],
+            "metadata": base["metadata"],
+            "rank_score": score,
+        })
+    fused.sort(key=lambda r: r["rank_score"], reverse=True)
+    return fused
+
+
 def cmd_query(args):
     global _tracker
     _tracker = UsageTracker("query")
@@ -1335,19 +1420,49 @@ def cmd_query(args):
         else:
             raise
 
-    # Filter by similarity threshold
-    filtered = []
+    # Build the vector candidate rows (all fetched, with 0-based rank + similarity).
+    vec_rows = []
     if results["ids"] and results["ids"][0]:
         for i, doc_id in enumerate(results["ids"][0]):
             distance = results["distances"][0][i] if results["distances"] else 0
-            similarity = 1 - distance
-            if similarity >= threshold:
-                filtered.append({
-                    "id": doc_id,
-                    "content": results["documents"][0][i] if results["documents"] else "",
-                    "similarity": similarity,
-                    "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                })
+            vec_rows.append({
+                "id": doc_id,
+                "content": results["documents"][0][i] if results["documents"] else "",
+                "similarity": 1 - distance,
+                "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
+                "vrank": i,
+            })
+
+    # Phase-2 hybrid (codex-gated; config flag `hybrid_search`, default off): RRF-fuse
+    # vector + BM25. `rank_score` is the ORDERING key (= RRF when hybrid applied, =
+    # similarity otherwise); raw cosine stays as `similarity` for display/threshold/debug.
+    hybrid_on = config.get("hybrid_search") is True
+    hybrid_applied = False
+    hybrid_reason = None
+    if hybrid_on and not fts_db_exists():
+        hybrid_reason = "sidecar-missing"
+        print("[hybrid] WARNING: hybrid_search enabled but FTS sidecar missing -> vector-only "
+              "(run `mmrag fts-build`)", file=sys.stderr)
+    if hybrid_on and fts_db_exists():
+        bm25_type = None
+        if type_filter:
+            _tmap = {"image": "image", "video": "video_chunk", "text": "text",
+                     "pdf": "pdf_page", "audio": "audio"}
+            bm25_type = _tmap.get(type_filter, type_filter)
+        conn = fts_connect()
+        try:
+            bm25 = fts_search(conn, collection_name, args.question, fetch_k, type_filter=bm25_type)
+        finally:
+            conn.close()
+        filtered = hybrid_fuse(vec_rows, bm25, threshold, collection, collection_name, query_embedding)
+        hybrid_applied = True
+    else:
+        # Vector-only: cosine threshold filter; rank_score = similarity (ordering unchanged).
+        filtered = [
+            {"id": r["id"], "content": r["content"], "similarity": r["similarity"],
+             "metadata": r["metadata"], "rank_score": r["similarity"]}
+            for r in vec_rows if r["similarity"] >= threshold
+        ]
 
     # Deduplicate near-identical results (same file in multiple lesson folders)
     filtered = deduplicate_results(filtered)
@@ -1382,6 +1497,7 @@ def cmd_query(args):
             "query": args.question,
             "collection": collection_name,
             "result_count": len(filtered),
+            "hybrid": {"enabled": hybrid_on, "applied": hybrid_applied, "reason": hybrid_reason},
             "source_files": source_files,
             "results": [],
         }
@@ -1391,6 +1507,7 @@ def cmd_query(args):
                 "content": r["content"] if show_full else r["content"][:DEFAULT_PREVIEW_CHARS],
                 "content_full_length": len(r["content"]),
                 "similarity": round(r["similarity"], 4),
+                "rank_score": round(r.get("rank_score", r["similarity"]), 6),
                 "source": meta.get("source", ""),
                 "type": meta.get("type", ""),
                 "filename": meta.get("filename", ""),

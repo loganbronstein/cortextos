@@ -113,5 +113,51 @@ class TestFtsSidecar(unittest.TestCase):
             self.fail(f"fts_search raised on punctuation query: {e}")
 
 
+class TestRRFFuse(unittest.TestCase):
+    """Phase-2 RRF fusion (hybrid_fuse): candidate OR-inclusion, BM25 boost, hydration."""
+
+    def test_cosine(self):
+        self.assertAlmostEqual(mmrag._cosine([1, 0], [1, 0]), 1.0)
+        self.assertAlmostEqual(mmrag._cosine([1, 0], [0, 1]), 0.0)
+        self.assertEqual(mmrag._cosine([], [1.0]), 0.0)
+
+    def _vec(self, doc_id, sim, vrank):
+        return {"id": doc_id, "content": doc_id, "similarity": sim, "metadata": {}, "vrank": vrank}
+
+    def test_bm25_boost_surfaces_buried_vector_hit(self):
+        # The answer is vrank 5 (buried under 5 shared docs) but BM25 ranks it #1 -> RRF floats it up.
+        vec = [self._vec(f"s{i}", 0.60 - i * 0.01, i) for i in range(5)]
+        vec.append(self._vec("ans", 0.55, 5))
+        fused = mmrag.hybrid_fuse(vec, [("ans", 0)], 0.5, None, "c", [1.0])
+        self.assertEqual(fused[0]["id"], "ans")
+        self.assertIn("rank_score", fused[0])
+        self.assertGreater(fused[0]["rank_score"], fused[1]["rank_score"])
+
+    def test_bm25_hit_below_cosine_floor_is_included(self):
+        # 'lex' cosine 0.2 (< 0.5 floor) but a BM25 hit -> candidate (the q07 mechanism).
+        vec = [self._vec("v1", 0.7, 0), self._vec("lex", 0.2, 1)]
+        fused = mmrag.hybrid_fuse(vec, [("lex", 0)], 0.5, None, "c", [1.0])
+        ids = [r["id"] for r in fused]
+        self.assertIn("lex", ids)
+        self.assertIn("v1", ids)
+
+    def test_vector_below_floor_and_not_in_bm25_excluded(self):
+        vec = [self._vec("v1", 0.7, 0), self._vec("low", 0.3, 1)]
+        fused = mmrag.hybrid_fuse(vec, [], 0.5, None, "c", [1.0])
+        self.assertEqual([r["id"] for r in fused], ["v1"])
+
+    def test_fts_only_hit_hydrated_from_chroma(self):
+        class HydrateCol:
+            def get(self, ids=None, include=None):
+                return {"ids": ["ftsonly"], "documents": ["hydrated text"],
+                        "metadatas": [{"source": "/x/h.md"}], "embeddings": [[1.0, 0.0]]}
+        vec = [self._vec("v1", 0.7, 0)]
+        fused = mmrag.hybrid_fuse(vec, [("ftsonly", 0)], 0.5, HydrateCol(), "c", [1.0, 0.0])
+        row = next((r for r in fused if r["id"] == "ftsonly"), None)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["content"], "hydrated text")
+        self.assertAlmostEqual(row["similarity"], 1.0)  # cosine([1,0],[1,0]) hydrated for display
+
+
 if __name__ == "__main__":
     unittest.main()
