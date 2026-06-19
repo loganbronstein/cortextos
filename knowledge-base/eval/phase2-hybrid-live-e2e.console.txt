@@ -1,0 +1,47 @@
+==========================================================================
+  LOCKED baseline (eval-set locked 2026-06-17T00:24Z).
+  eval-set v1.1-locked | snapshot=/Users/loganbronstein/.cortextos/default/orgs/cortex/knowledge-base/chromadb
+  eval-set path=/Users/loganbronstein/Sale Advisor/Vault/Research/cortextos/kb-retrieval-eval-set.json
+  eval-set sha256=b669c058d9104e34422e5d4f6e1c5f5583e0800b81d33c799fb60113eec527c6
+==========================================================================
+
+[FLAG OFF (prod today) — shared-first concat, ROW-LEVEL no-dedup, threshold 0.5]
+  n=18 scored / 2 controls
+  Recall@5=0.3333  Recall@20=0.3889  MRR=0.3262  FP-rate=1.0
+
+[FLAG ON (Fix A) — merged by score, ROW-LEVEL no-dedup, threshold 0.5]
+  n=18 scored / 2 controls
+  Recall@5=0.7778  Recall@20=0.8333  MRR=0.6659  FP-rate=1.0
+
+[ALL-7 MERGED — corpus-wide RETRIEVABILITY REFERENCE (threshold 0, NOT prod)]
+  n=18 scored / 2 controls
+  Recall@5=0.6111  Recall@20=0.9444  MRR=0.3952  FP-rate=1.0
+
+[PROD_CURRENT (ref) — wrapper concat, SOURCE-LEVEL dedup (= locked Phase-0 0.33)]
+  n=18 scored / 2 controls
+  Recall@5=0.3333  Recall@20=1.0  MRR=0.3766  FP-rate=1.0
+
+[PROD_MERGED_CANDIDATE (ref) — source-level merge, threshold 0 (ceiling)]
+  n=18 scored / 2 controls
+  Recall@5=0.7778  Recall@20=1.0  MRR=0.6933  FP-rate=1.0
+
+[HYBRID (Phase-2) — scope=all by rank_score (RRF when hybrid_search on), FP by similarity]
+  n=18 scored / 2 controls
+  Recall@5=0.8333  Recall@20=0.9444  MRR=0.6979  FP-rate=1.0
+
+Per-collection FIX A A/B (flag OFF -> flag ON, row-level @0.5):
+  agent-analyst    n= 1  OFF R@5=0.0 R@20=0.0 MRR=0.0476  ->  ON R@5=1.0 R@20=1.0 MRR=0.5
+  agent-boss       n= 2  OFF R@5=0.0 R@20=0.0 MRR=0.0399  ->  ON R@5=0.5 R@20=0.5 MRR=0.5179
+  agent-coder      n= 1  OFF R@5=0.0 R@20=0.0 MRR=0.0476  ->  ON R@5=1.0 R@20=1.0 MRR=1.0
+  agent-codex      n= 1  OFF R@5=0.0 R@20=0.0 MRR=0.0476  ->  ON R@5=1.0 R@20=1.0 MRR=1.0
+  agent-marketing  n= 1  OFF R@5=0.0 R@20=0.0 MRR=0.04  ->  ON R@5=0.0 R@20=0.0 MRR=0.0385
+  agent-scribe     n= 6  OFF R@5=0.0 R@20=0.1667 MRR=0.0459  ->  ON R@5=0.6667 R@20=0.8333 MRR=0.4854
+  any              n= 0  OFF R@5=None R@20=None MRR=None  ->  ON R@5=None R@20=None MRR=None
+  shared-cortex    n= 6  OFF R@5=1.0 R@20=1.0 MRR=0.8889  ->  ON R@5=1.0 R@20=1.0 MRR=0.9167
+
+⚠ 3 PROD-PATH MISS(ES) (flag_on_rows recall@20==0 — fix mapping or re-ingest):
+    [q07 LEX] 'Aleric Heck AdOutreach' -> expected ['agents/scribe/memory/2026-06-16.md'] (agent-scribe) — NOT vector-retrievable corpus-wide @20 (hybrid Phase-2 or reingest)
+    [q10 VEC] 'What did Logan decide about a Higgsfield subscription?' -> expected ['agents/boss/MEMORY.md', 'agents/scribe/memory/2026-06-16.md'] (agent-boss) — corpus CAN retrieve it via vector (ranking gap — rerank Phase-2 may help)
+    [q14 RANK] 'What are the SA brand CTA rules for paid ads?' -> expected ['agents/marketing/MEMORY.md'] (agent-marketing) — corpus CAN retrieve it via vector (ranking gap — rerank Phase-2 may help)
+
+Full report -> /tmp/kb-phase2-e2e/live-hybrid.json
