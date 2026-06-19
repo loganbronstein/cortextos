@@ -9,6 +9,13 @@ import { getCTXRoot, getFrameworkRoot } from '@/lib/config';
 export const dynamic = 'force-dynamic';
 
 /**
+ * Thrown when `hybrid_search` is enabled and the underlying mmrag query exits non-zero
+ * (a real FTS/RRF failure). Phase-2 fail-loud: such an error must surface as an error
+ * HTTP response, never be masked as a 200 with empty results that looks like "no matches".
+ */
+class KBHybridError extends Error {}
+
+/**
  * GET /api/kb/search?q=<question>&org=<org>&agent=<agent>&scope=<scope>&limit=<n>&threshold=<f>
  *
  * Searches the cortextOS knowledge base via kb-query.sh → mmrag.py → ChromaDB.
@@ -134,9 +141,21 @@ export async function GET(request: NextRequest) {
     return Response.json({ results: [], total: 0, query: q, collection: `shared-${org}` });
   }
 
+  // Phase-2: read the hybrid_search flag the same way mmrag does, so fail-loud is scoped
+  // to hybrid-enabled queries only. Default-off / missing / unreadable config => false (neutral).
+  let hybridEnabled = false;
+  try {
+    const cfg = JSON.parse(readFileSync(configPath, 'utf-8')) as { hybrid_search?: unknown };
+    hybridEnabled = cfg.hybrid_search === true;
+  } catch {
+    hybridEnabled = false;
+  }
+
   /**
    * Run a single mmrag.py query against one collection.
-   * Returns empty array (never throws) — callers handle missing/empty collections gracefully.
+   * Returns empty array for non-hybrid queries (callers handle missing/empty collections
+   * gracefully). When hybrid_search is enabled, a real FTS/RRF failure (non-zero exit with
+   * no recoverable output) THROWS a KBHybridError instead, so it surfaces as an error response.
    */
   function runQuery(col: string): Array<{
     content?: string; result?: string; similarity?: number; rank_score?: number;
@@ -160,7 +179,17 @@ export async function GET(request: NextRequest) {
     } catch (e: unknown) {
       // On non-zero exit, try to recover stdout (partial output)
       stdout = (e as { stdout?: string }).stdout || '';
-      if (!stdout) return [];
+      if (!stdout) {
+        // Phase-2 fail-loud: a real FTS/RRF failure while hybrid_search is on must SURFACE
+        // as an error response, not be masked as "0 results". Non-hybrid stays neutral.
+        if (hybridEnabled) {
+          const stderr = String((e as { stderr?: unknown }).stderr ?? '').trim();
+          throw new KBHybridError(
+            `hybrid_search query failed (collection=${col}): ${stderr || (e as Error).message}`,
+          );
+        }
+        return [];
+      }
     }
     const trimmed = stdout.trim();
     const jsonStart = trimmed.indexOf('{');
@@ -279,6 +308,12 @@ export async function GET(request: NextRequest) {
       collection: collection || 'all',
     });
   } catch (err: unknown) {
+    // Phase-2 fail-loud: a hybrid_search failure must surface as an error response, never
+    // be masked as a 200 with empty results.
+    if (err instanceof KBHybridError) {
+      console.error('[api/kb/search]', err.message);
+      return Response.json({ error: err.message, hybrid: true }, { status: 500 });
+    }
     const message = err instanceof Error ? err.message : String(err);
     // If knowledge base not set up, return empty rather than 500
     if (message.includes('not set up') || message.includes('No collections')) {
