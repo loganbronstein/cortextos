@@ -139,7 +139,7 @@ export async function GET(request: NextRequest) {
    * Returns empty array (never throws) — callers handle missing/empty collections gracefully.
    */
   function runQuery(col: string): Array<{
-    content?: string; result?: string; similarity?: number;
+    content?: string; result?: string; similarity?: number; rank_score?: number;
     source?: string; type?: string; filename?: string;
     chunk_index?: number; total_chunks?: number; content_full_length?: number;
   }> {
@@ -201,7 +201,7 @@ export async function GET(request: NextRequest) {
 
   try {
     let allResults: Array<{
-      content?: string; result?: string; similarity?: number;
+      content?: string; result?: string; similarity?: number; rank_score?: number;
       source?: string; type?: string; filename?: string;
       chunk_index?: number; total_chunks?: number; content_full_length?: number;
     }> = [];
@@ -240,8 +240,9 @@ export async function GET(request: NextRequest) {
         if (agent) allResults.push(...runQuery(`agent-${agent}`));
       }
 
-      // Sort merged results by similarity descending, deduplicate by content hash
-      allResults.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
+      // Sort merged results by rank_score descending (Phase-2 hybrid ranking-key:
+      // = RRF when hybrid_search is on, = similarity otherwise), deduplicate by content hash.
+      allResults.sort((a, b) => (b.rank_score ?? b.similarity ?? 0) - (a.rank_score ?? a.similarity ?? 0));
       const seen = new Set<string>();
       allResults = allResults.filter(r => {
         const k = (r.source || '') + '::' + (r.content || r.result || '').slice(0, 100);
@@ -262,7 +263,7 @@ export async function GET(request: NextRequest) {
       source_file: r.source || '',
       agent_name: agent || undefined,
       org: org || '',
-      score: r.similarity ?? 0,
+      score: r.rank_score ?? r.similarity ?? 0,
       doc_type: r.type || 'text',
       filename: r.filename || '',
       collection: (r as { _collection?: string })._collection || collection || `shared-${org}`,
