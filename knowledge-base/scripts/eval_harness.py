@@ -189,6 +189,36 @@ def fix_a_rows(by_col: dict, col, shared: str, threshold: float, merge: bool) ->
     return sort_by_score_stable(rows) if merge else rows
 
 
+def _norm_rows(rows) -> list[tuple[str, float, float]]:
+    """Normalize query rows to (path, similarity, rank_score). Accepts 3-tuples from
+    query_collection (Phase-2) OR 2-tuples (path, sim) from older callers / mocked
+    tests, where rank_score defaults to similarity (vector-only / back-compat)."""
+    out = []
+    for r in rows:
+        if len(r) >= 3:
+            out.append((r[0], float(r[1]), float(r[2])))
+        else:
+            out.append((r[0], float(r[1]), float(r[1])))
+    return out
+
+
+def hybrid_rows(by_col3: dict, col, shared: str) -> list[tuple[str, float, float]]:
+    """Phase-2 HYBRID prod view — the Fix-A scope=all wrapper now keyed on rank_score.
+    Compose scope=all ROW-LEVEL (shared ++ the query's agent collection, NO dedup),
+    then ORDER BY rank_score desc (= RRF when mmrag ran with hybrid_search on, = similarity
+    when off; ties keep shared-first via index decoration). Deliberately applies NO
+    similarity floor: mmrag's hybrid candidate selection already lets a strong lexical /
+    low-cosine hit (q07) through by bypassing the cosine floor, so re-imposing a floor here
+    would erase the very lift being measured. Rows stay (path, similarity, rank_score) so
+    recall reads rank_score order while FP reads similarity (the dropped-floor risk guard)."""
+    rows = list(by_col3.get(shared, []))
+    if isinstance(col, str) and col.startswith("agent-"):
+        rows = rows + list(by_col3.get(col, []))
+    decorated = list(enumerate(rows))
+    decorated.sort(key=lambda d: (-d[1][2], d[0]))
+    return [r for _, r in decorated]
+
+
 def ranked_paths(merged: list[tuple[str, float]]) -> list[str]:
     return [p for p, _ in merged]
 
@@ -225,10 +255,10 @@ def mean(values: list):
 # Retrieval (I/O — mocked in tests). FAIL LOUD: never swallow a query error.
 # --------------------------------------------------------------------------
 def query_collection(python: str, mmrag: str, collection: str, query: str,
-                     env: dict, top_k: int = TOP_K) -> list[tuple[str, float]]:
+                     env: dict, top_k: int = TOP_K) -> list[tuple[str, float, float]]:
     """Run `mmrag.py query` against ONE collection; return [(full_source_path,
-    similarity)] in rank order. Raises RuntimeError on non-zero exit / no JSON /
-    parse error (plan §F: fail loud, never silent-degrade to empty)."""
+    similarity, rank_score)] in rank order. Raises RuntimeError on non-zero exit /
+    no JSON / parse error (plan §F: fail loud, never silent-degrade to empty)."""
     proc = subprocess.run(
         [python, mmrag, "query", query,
          "--collection", collection,
@@ -257,7 +287,13 @@ def query_collection(python: str, mmrag: str, collection: str, query: str,
     for r in data.get("results", []):
         src = r.get("source") or ""  # FULL path (matching needs the path, not basename)
         if src:
-            ranked.append((src, float(r.get("similarity", 0.0))))
+            sim = float(r.get("similarity", 0.0))
+            # Phase-2: rank_score is mmrag's ORDERING key (= RRF when hybrid_search is on,
+            # = similarity otherwise). Captured alongside raw cosine so the hybrid view can
+            # order by rank_score while threshold/FP stay on similarity. Falls back to
+            # similarity for non-hybrid / older mmrag output that omits rank_score.
+            rank = float(r.get("rank_score", sim))
+            ranked.append((src, sim, rank))
     return ranked
 
 
@@ -287,8 +323,10 @@ def _collections(eval_set: dict) -> list[str]:
 
 # Retrieval views (see module docstring). Order = report order.
 # Phase-1 Fix A headline = the row-level no-dedup A/B (flag_off_rows vs
-# flag_on_rows). The rest are labeled REFERENCES (source-level / corpus-wide).
-VIEWS = ("flag_off_rows", "flag_on_rows", "all7_merged", "prod_current", "prod_merged_candidate")
+# flag_on_rows). Phase-2 headline = `hybrid` (rank_score-ordered, run against a
+# hybrid_search-on config) vs the Fix-A baseline (flag_on_rows). The rest are
+# labeled REFERENCES (source-level / corpus-wide).
+VIEWS = ("flag_off_rows", "flag_on_rows", "all7_merged", "prod_current", "prod_merged_candidate", "hybrid")
 
 
 def evaluate(eval_set: dict, python: str, mmrag: str, base_env: dict,
@@ -305,9 +343,12 @@ def evaluate(eval_set: dict, python: str, mmrag: str, base_env: dict,
         negative = bool(q.get("negative_control")) or not fragments
         col = q.get("collection")
 
-        # One query per collection at threshold 0 (top-k 20); all three views are
-        # derived from this so prod fidelity costs no extra mmrag calls.
-        by_col = {c: query_fn(python, mmrag, c, q["query"], env) for c in collections}
+        # One query per collection at threshold 0 (top-k 20); all views are derived
+        # from this so prod fidelity costs no extra mmrag calls. by_col3 carries
+        # rank_score (Phase-2); by_col is the (path, sim) projection the vector-ordered
+        # views use unchanged. _norm_rows tolerates 2-tuple callers/mocks (rank=sim).
+        by_col3 = {c: _norm_rows(query_fn(python, mmrag, c, q["query"], env)) for c in collections}
+        by_col = {c: [(p, s) for p, s, _ in rows] for c, rows in by_col3.items()}
 
         # View 1 — ALL-7 MERGED: corpus-wide retrievability reference (threshold 0).
         all7_merged = merge_ranked(list(by_col.values()))
@@ -333,6 +374,12 @@ def evaluate(eval_set: dict, python: str, mmrag: str, base_env: dict,
         flag_on_rows = fix_a_rows(by_col, col, PROD_SHARED, prod_threshold, merge=True)
         rows_fp = pc_fp
 
+        # Phase-2 HYBRID view — scope=all composition ordered by rank_score (= RRF when
+        # mmrag ran hybrid_search-on, else = similarity). Headline vs the Fix-A baseline
+        # (flag_on_rows): q07 LEX miss->hit, no VEC regression; FP read by SIMILARITY so
+        # the dropped cosine floor can't inflate negative-control FP.
+        hybrid = hybrid_rows(by_col3, col, PROD_SHARED)
+
         per_query.append({
             "id": q.get("id"), "tag": q.get("tag"), "query": q["query"],
             "collection": col, "negative_control": negative,
@@ -342,6 +389,7 @@ def evaluate(eval_set: dict, python: str, mmrag: str, base_env: dict,
             "all7_merged": _query_block(all7_merged, fragments, negative, prod_threshold),
             "prod_current": _query_block(prod_current, fragments, negative, prod_threshold, fp=pc_fp),
             "prod_merged_candidate": _query_block(prod_merged_candidate, fragments, negative, prod_threshold),
+            "hybrid": _hybrid_query_block(hybrid, fragments, negative, prod_threshold),
         })
 
     return {
@@ -372,6 +420,23 @@ def _query_block(ranked, fragments, negative, threshold, fp=_AUTO_FP) -> dict:
     paths = ranked_paths(ranked)
     if fp == _AUTO_FP:
         fp = is_false_positive(ranked, threshold) if negative else None
+    return {
+        "recall@5": recall_at_k(paths, fragments, 5),
+        "recall@20": recall_at_k(paths, fragments, 20),
+        "rr": reciprocal_rank(paths, fragments),
+        "false_positive": fp,
+        "top5": paths[:5],
+    }
+
+
+def _hybrid_query_block(rows3, fragments, negative, threshold) -> dict:
+    """Per-query metric block for the Phase-2 HYBRID view. rows3 = (path, sim, rank_score)
+    ALREADY ordered by rank_score (hybrid_rows). Recall/MRR read that rank_score order;
+    the false-positive check reads SIMILARITY (a negative control is an FP only if a
+    CONFIDENT cosine match >= threshold is returned — the dropped cosine floor must not
+    inflate FP). Same output shape as _query_block so _agg treats every view uniformly."""
+    paths = [p for p, _s, _r in rows3]
+    fp = (any(s >= threshold for _p, s, _r in rows3)) if negative else None
     return {
         "recall@5": recall_at_k(paths, fragments, 5),
         "recall@20": recall_at_k(paths, fragments, 20),
@@ -427,6 +492,7 @@ VIEW_LABELS = {
     "all7_merged": "ALL-7 MERGED — corpus-wide RETRIEVABILITY REFERENCE (threshold 0, NOT prod)",
     "prod_current": "PROD_CURRENT (ref) — wrapper concat, SOURCE-LEVEL dedup (= locked Phase-0 0.33)",
     "prod_merged_candidate": "PROD_MERGED_CANDIDATE (ref) — source-level merge, threshold 0 (ceiling)",
+    "hybrid": "HYBRID (Phase-2) — scope=all by rank_score (RRF when hybrid_search on), FP by similarity",
 }
 
 
