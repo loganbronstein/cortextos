@@ -89,8 +89,17 @@ class TestQueryCollectionFailLoud(unittest.TestCase):
                    '{"source": "/x/agents/boss/MEMORY.md", "similarity": 0.9, "filename": "MEMORY.md"},'
                    '{"source": "/x/b.md", "similarity": 0.4}]}')
         ranked = self._run(stdout=payload)
-        # FULL path retained (not basename) so matching can disambiguate
-        self.assertEqual(ranked, [("/x/agents/boss/MEMORY.md", 0.9), ("/x/b.md", 0.4)])
+        # FULL path retained (not basename) so matching can disambiguate. rank_score
+        # absent -> defaults to similarity (vector-only / back-compat).
+        self.assertEqual(ranked, [("/x/agents/boss/MEMORY.md", 0.9, 0.9), ("/x/b.md", 0.4, 0.4)])
+
+    def test_rank_score_captured_distinct_from_similarity(self):
+        # Phase-2: mmrag emits rank_score (RRF ordering key) alongside raw cosine.
+        payload = ('{"results": ['
+                   '{"source": "/x/a.md", "similarity": 0.2, "rank_score": 0.05},'
+                   '{"source": "/x/b.md", "similarity": 0.9, "rank_score": 0.01}]}')
+        ranked = self._run(stdout=payload)
+        self.assertEqual(ranked, [("/x/a.md", 0.2, 0.05), ("/x/b.md", 0.9, 0.01)])
 
 
 class TestEvaluateMocked(unittest.TestCase):
@@ -278,6 +287,86 @@ class TestFixARowLevel(unittest.TestCase):
         # a confident hit on ANY reachable path is an FP for both flag states
         self.assertEqual(rep["aggregate"]["flag_off_rows"]["false_positive_rate"], 1.0)
         self.assertEqual(rep["aggregate"]["flag_on_rows"]["false_positive_rate"], 1.0)
+
+
+class TestHybridView(unittest.TestCase):
+    """Phase-2 hybrid view: scope=all ORDERED BY rank_score (= RRF when hybrid_search on,
+    = similarity off), FP read by SIMILARITY so the dropped cosine floor can't inflate it."""
+
+    def test_norm_rows_accepts_2_and_3_tuples(self):
+        # 2-tuple (back-compat / mocks) -> rank_score defaults to similarity.
+        self.assertEqual(eh._norm_rows([("/x/a.md", 0.7)]), [("/x/a.md", 0.7, 0.7)])
+        # 3-tuple passes through.
+        self.assertEqual(eh._norm_rows([("/x/a.md", 0.7, 0.02)]), [("/x/a.md", 0.7, 0.02)])
+
+    def test_hybrid_rows_orders_by_rank_score_not_similarity(self):
+        by_col3 = {
+            "shared-cortex": [("/x/shared/lo.md", 0.9, 0.01)],         # high sim, LOW rank_score
+            "agent-coder": [("/x/agents/coder/q07.md", 0.2, 0.05)],    # low sim, HIGH rank_score (BM25)
+        }
+        rows = eh.hybrid_rows(by_col3, "agent-coder", "shared-cortex")
+        # rank_score desc -> the BM25-boosted low-cosine hit ranks FIRST
+        self.assertEqual([p for p, _s, _r in rows],
+                         ["/x/agents/coder/q07.md", "/x/shared/lo.md"])
+
+    def test_hybrid_rows_shared_only_for_shared_collection(self):
+        by_col3 = {"shared-cortex": [("/x/s.md", 0.8, 0.8)], "agent-coder": [("/x/a.md", 0.2, 0.9)]}
+        rows = eh.hybrid_rows(by_col3, "shared-cortex", "shared-cortex")
+        self.assertEqual([p for p, _s, _r in rows], ["/x/s.md"])  # no agent path on shared queries
+
+    def test_hybrid_lex_miss_to_hit_via_evaluate(self):
+        # q07 shape: lexical answer has LOW cosine (buried / below the 0.5 floor) but a top
+        # rank_score from BM25. flag_on_rows (similarity order + 0.5 floor) MISSES it; the
+        # hybrid view (rank_score order, no floor) HITS it.
+        eval_set = {
+            "version": "1.1-locked", "locked_at_utc": "z",
+            "queries": [
+                {"id": "q07", "tag": "LEX", "query": "Aleric Heck AdOutreach",
+                 "expected_sources": ["agent-coder/aleric.md"],
+                 "collection": "agent-coder", "negative_control": False},
+            ],
+        }
+
+        def fake(python, mmrag, collection, query, env, top_k=eh.TOP_K):
+            if collection == "shared-cortex":
+                # confident shared rows that bury everything by similarity
+                return [("/x/shared/s%d.md" % i, 0.80 - i * 0.01, 0.010 - i * 0.0001) for i in range(6)]
+            if collection == "agent-coder":
+                # lexical answer: BELOW the 0.5 cosine floor, but top rank_score (BM25)
+                return [("/x/agent-coder/aleric.md", 0.31, 0.09)]
+            return []
+
+        rep = eh.evaluate(eval_set, "py", "mmrag.py", {}, None, 0.5, query_fn=fake)
+        # Fix-A baseline (similarity order + 0.5 floor): the 0.31 answer is dropped -> miss
+        self.assertEqual(rep["aggregate"]["flag_on_rows"]["recall@5"], 0.0)
+        self.assertEqual(rep["aggregate"]["flag_on_rows"]["recall@20"], 0.0)
+        # Hybrid (rank_score order, no floor): the answer (rank_score 0.09) is rank #1 -> hit
+        self.assertEqual(rep["aggregate"]["hybrid"]["recall@5"], 1.0)
+        self.assertEqual(rep["aggregate"]["hybrid"]["mrr"], 1.0)
+
+    def test_hybrid_fp_reads_similarity_not_rank_score(self):
+        # A negative control whose only rows are LOW similarity (even at high rank_score)
+        # must NOT be a hybrid FP; a confident (>=0.5) cosine row IS. This is the
+        # dropped-cosine-floor guard (plan §E: controls' FP must not inflate).
+        def es():
+            return {
+                "version": "1.1-locked", "locked_at_utc": "z",
+                "queries": [{"id": "c1", "tag": "VEC", "query": "noise",
+                             "expected_sources": [], "collection": "shared-cortex",
+                             "negative_control": True}],
+            }
+
+        def clean(python, mmrag, collection, query, env, top_k=eh.TOP_K):
+            # high rank_score but sub-threshold similarity -> NOT a confident match
+            return [("/x/shared/junk.md", 0.30, 0.99)] if collection == "shared-cortex" else []
+
+        def dirty(python, mmrag, collection, query, env, top_k=eh.TOP_K):
+            return [("/x/shared/real.md", 0.70, 0.02)] if collection == "shared-cortex" else []
+
+        rep_clean = eh.evaluate(es(), "py", "mmrag.py", {}, None, 0.5, query_fn=clean)
+        rep_dirty = eh.evaluate(es(), "py", "mmrag.py", {}, None, 0.5, query_fn=dirty)
+        self.assertEqual(rep_clean["aggregate"]["hybrid"]["false_positive_rate"], 0.0)
+        self.assertEqual(rep_dirty["aggregate"]["hybrid"]["false_positive_rate"], 1.0)
 
 
 if __name__ == "__main__":

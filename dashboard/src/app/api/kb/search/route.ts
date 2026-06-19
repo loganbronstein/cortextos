@@ -9,6 +9,13 @@ import { getCTXRoot, getFrameworkRoot } from '@/lib/config';
 export const dynamic = 'force-dynamic';
 
 /**
+ * Thrown when `hybrid_search` is enabled and the underlying mmrag query exits non-zero
+ * (a real FTS/RRF failure). Phase-2 fail-loud: such an error must surface as an error
+ * HTTP response, never be masked as a 200 with empty results that looks like "no matches".
+ */
+class KBHybridError extends Error {}
+
+/**
  * GET /api/kb/search?q=<question>&org=<org>&agent=<agent>&scope=<scope>&limit=<n>&threshold=<f>
  *
  * Searches the cortextOS knowledge base via kb-query.sh → mmrag.py → ChromaDB.
@@ -134,12 +141,30 @@ export async function GET(request: NextRequest) {
     return Response.json({ results: [], total: 0, query: q, collection: `shared-${org}` });
   }
 
+  // Phase-2: read the hybrid_search flag the same way mmrag does, so fail-loud is scoped
+  // to hybrid-enabled queries only. Default-off / missing / unreadable config => false (neutral).
+  let hybridEnabled = false;
+  try {
+    const cfg = JSON.parse(readFileSync(configPath, 'utf-8')) as { hybrid_search?: unknown };
+    hybridEnabled = cfg.hybrid_search === true;
+  } catch {
+    hybridEnabled = false;
+  }
+
+  // Phase-2: a missing FTS sidecar is a non-fatal degrade (mmrag falls back to vector-only,
+  // exit 0, and reports it in the JSON `hybrid` block). Surface it so an operator who enabled
+  // hybrid_search without building the sidecar isn't silently running vector-only. Mirrors the
+  // bus wrapper warning (src/bus/knowledge-base.ts).
+  let hybridDegraded: { reason: string } | null = null;
+
   /**
    * Run a single mmrag.py query against one collection.
-   * Returns empty array (never throws) — callers handle missing/empty collections gracefully.
+   * Returns empty array for non-hybrid queries (callers handle missing/empty collections
+   * gracefully). When hybrid_search is enabled, a real FTS/RRF failure (non-zero exit with
+   * no recoverable output) THROWS a KBHybridError instead, so it surfaces as an error response.
    */
   function runQuery(col: string): Array<{
-    content?: string; result?: string; similarity?: number;
+    content?: string; result?: string; similarity?: number; rank_score?: number;
     source?: string; type?: string; filename?: string;
     chunk_index?: number; total_chunks?: number; content_full_length?: number;
   }> {
@@ -160,13 +185,31 @@ export async function GET(request: NextRequest) {
     } catch (e: unknown) {
       // On non-zero exit, try to recover stdout (partial output)
       stdout = (e as { stdout?: string }).stdout || '';
-      if (!stdout) return [];
+      if (!stdout) {
+        // Phase-2 fail-loud: a real FTS/RRF failure while hybrid_search is on must SURFACE
+        // as an error response, not be masked as "0 results". Non-hybrid stays neutral.
+        if (hybridEnabled) {
+          const stderr = String((e as { stderr?: unknown }).stderr ?? '').trim();
+          throw new KBHybridError(
+            `hybrid_search query failed (collection=${col}): ${stderr || (e as Error).message}`,
+          );
+        }
+        return [];
+      }
     }
     const trimmed = stdout.trim();
     const jsonStart = trimmed.indexOf('{');
     if (jsonStart === -1) return [];
     try {
       const parsed = JSON.parse(trimmed.slice(jsonStart));
+      const hy = parsed.hybrid;
+      if (hy && hy.enabled === true && hy.applied === false && hy.reason === 'sidecar-missing') {
+        hybridDegraded = { reason: 'sidecar-missing' };
+        console.warn(
+          "[api/kb/search] hybrid_search enabled but FTS sidecar missing — vector-only results. " +
+          "Run 'mmrag fts-build' to enable hybrid retrieval.",
+        );
+      }
       return parsed.results || [];
     } catch { return []; }
   }
@@ -201,7 +244,7 @@ export async function GET(request: NextRequest) {
 
   try {
     let allResults: Array<{
-      content?: string; result?: string; similarity?: number;
+      content?: string; result?: string; similarity?: number; rank_score?: number;
       source?: string; type?: string; filename?: string;
       chunk_index?: number; total_chunks?: number; content_full_length?: number;
     }> = [];
@@ -240,8 +283,9 @@ export async function GET(request: NextRequest) {
         if (agent) allResults.push(...runQuery(`agent-${agent}`));
       }
 
-      // Sort merged results by similarity descending, deduplicate by content hash
-      allResults.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
+      // Sort merged results by rank_score descending (Phase-2 hybrid ranking-key:
+      // = RRF when hybrid_search is on, = similarity otherwise), deduplicate by content hash.
+      allResults.sort((a, b) => (b.rank_score ?? b.similarity ?? 0) - (a.rank_score ?? a.similarity ?? 0));
       const seen = new Set<string>();
       allResults = allResults.filter(r => {
         const k = (r.source || '') + '::' + (r.content || r.result || '').slice(0, 100);
@@ -254,7 +298,10 @@ export async function GET(request: NextRequest) {
     }
 
     if (allResults.length === 0) {
-      return Response.json({ results: [], total: 0, query: q, collection: `shared-${org}` });
+      return Response.json({
+        results: [], total: 0, query: q, collection: `shared-${org}`,
+        ...(hybridDegraded ? { hybridDegraded } : {}),
+      });
     }
 
     const results = allResults.map((r) => ({
@@ -262,7 +309,7 @@ export async function GET(request: NextRequest) {
       source_file: r.source || '',
       agent_name: agent || undefined,
       org: org || '',
-      score: r.similarity ?? 0,
+      score: r.rank_score ?? r.similarity ?? 0,
       doc_type: r.type || 'text',
       filename: r.filename || '',
       collection: (r as { _collection?: string })._collection || collection || `shared-${org}`,
@@ -276,8 +323,15 @@ export async function GET(request: NextRequest) {
       total: results.length,
       query: q,
       collection: collection || 'all',
+      ...(hybridDegraded ? { hybridDegraded } : {}),
     });
   } catch (err: unknown) {
+    // Phase-2 fail-loud: a hybrid_search failure must surface as an error response, never
+    // be masked as a 200 with empty results.
+    if (err instanceof KBHybridError) {
+      console.error('[api/kb/search]', err.message);
+      return Response.json({ error: err.message, hybrid: true }, { status: 500 });
+    }
     const message = err instanceof Error ? err.message : String(err);
     // If knowledge base not set up, return empty rather than 500
     if (message.includes('not set up') || message.includes('No collections')) {

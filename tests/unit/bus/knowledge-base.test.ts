@@ -39,8 +39,14 @@ vi.mock('../../../src/utils/org.js', () => ({
 
 import type { KBQueryResult } from '../../../src/bus/knowledge-base.js';
 
-const { queryKnowledgeBase, ingestKnowledgeBase, mergeByScore, shouldMergeCollectionsByScore } =
-  await import('../../../src/bus/knowledge-base.js');
+const {
+  queryKnowledgeBase,
+  ingestKnowledgeBase,
+  mergeByScore,
+  shouldMergeCollectionsByScore,
+  shouldUseHybridSearch,
+  KBHybridQueryError,
+} = await import('../../../src/bus/knowledge-base.js');
 
 // Minimal BusPaths stub — knowledge-base.ts doesn't actually USE the paths
 // object at call time, just the options/env it constructs.
@@ -278,6 +284,36 @@ describe('shouldMergeCollectionsByScore — fail-safe flag read', () => {
   });
 });
 
+describe('queryKnowledgeBase — Phase-2 hybrid ranking-key (rank_score) parse', () => {
+  it('sources score from rank_score when present (so hybrid RRF controls ordering)', () => {
+    fsMocks.existsSync.mockImplementation(() => true);
+    fsMocks.readFileSync.mockImplementation(() => '');
+    // mmrag returns rank_score DIFFERENT from similarity; the wrapper must use rank_score.
+    execFileSyncMock.mockReturnValue(
+      JSON.stringify({
+        results: [
+          { content: 'a', similarity: 0.9, rank_score: 0.01, source: 'a.md', type: 'markdown' },
+          { content: 'b', similarity: 0.2, rank_score: 0.03, source: 'b.md', type: 'markdown' },
+        ],
+      }),
+    );
+    const result = queryKnowledgeBase(dummyPaths, 'q', { ...baseOptions, scope: 'shared' });
+    const byId = Object.fromEntries(result.results.map((r) => [r.source_file, r.score]));
+    expect(byId['a.md']).toBe(0.01); // rank_score, NOT similarity 0.9
+    expect(byId['b.md']).toBe(0.03);
+  });
+
+  it('falls back to similarity when rank_score absent (back-compat / non-hybrid)', () => {
+    fsMocks.existsSync.mockImplementation(() => true);
+    fsMocks.readFileSync.mockImplementation(() => '');
+    execFileSyncMock.mockReturnValue(
+      JSON.stringify({ results: [{ content: 'a', similarity: 0.77, source: 'a.md', type: 'markdown' }] }),
+    );
+    const result = queryKnowledgeBase(dummyPaths, 'q', { ...baseOptions, scope: 'shared' });
+    expect(result.results[0].score).toBe(0.77);
+  });
+});
+
 describe('queryKnowledgeBase — Fix A wiring (flag gates the merge)', () => {
   // existsSync true everywhere (configured KB); readFileSync returns the given
   // config JSON for the config.json path, '' for .env/secrets.env.
@@ -370,5 +406,132 @@ describe('queryKnowledgeBase — Fix A wiring (flag gates the merge)', () => {
     const result = queryKnowledgeBase(dummyPaths, 'q', { ...baseOptions, scope: 'shared' });
 
     expect(result.results.map((r) => r.source_file)).toEqual(['lo.md', 'hi.md']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase-2 step 3b-cont: hybrid_search flag read + FAIL-LOUD contract.
+// A real FTS/RRF error (non-zero mmrag exit) must SURFACE when hybrid is on,
+// never be swallowed into "0 results". Non-hybrid queries stay neutral. The
+// sidecar-missing degrade (exit 0) is non-fatal but VISIBLE.
+// ---------------------------------------------------------------------------
+
+describe('shouldUseHybridSearch — fail-safe flag read', () => {
+  const env = { MMRAG_CONFIG: '/x/knowledge-base/config.json' } as Record<string, string>;
+
+  it('true ONLY when the key is the boolean true', () => {
+    fsMocks.readFileSync.mockReturnValue('{"hybrid_search": true}');
+    expect(shouldUseHybridSearch(env)).toBe(true);
+  });
+
+  it('false when the key is false', () => {
+    fsMocks.readFileSync.mockReturnValue('{"hybrid_search": false}');
+    expect(shouldUseHybridSearch(env)).toBe(false);
+  });
+
+  it('false when the key is absent (normal default config)', () => {
+    fsMocks.readFileSync.mockReturnValue('{"similarity_threshold": 0.5}');
+    expect(shouldUseHybridSearch(env)).toBe(false);
+  });
+
+  it('false on a non-boolean truthy value (e.g. the string "true")', () => {
+    fsMocks.readFileSync.mockReturnValue('{"hybrid_search": "true"}');
+    expect(shouldUseHybridSearch(env)).toBe(false);
+  });
+
+  it('false on malformed JSON, never throws', () => {
+    fsMocks.readFileSync.mockReturnValue('not json {');
+    expect(() => shouldUseHybridSearch(env)).not.toThrow();
+    expect(shouldUseHybridSearch(env)).toBe(false);
+  });
+
+  it('false when the file is unreadable (readFileSync throws)', () => {
+    fsMocks.readFileSync.mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
+    expect(shouldUseHybridSearch(env)).toBe(false);
+  });
+});
+
+describe('queryKnowledgeBase — Phase-2 fail-loud (hybrid FTS errors surface)', () => {
+  // existsSync true everywhere; readFileSync returns the given config JSON for the
+  // config.json path, '' for .env/secrets.env.
+  function mockKbWithConfigContent(configContent: string): void {
+    fsMocks.existsSync.mockImplementation(() => true);
+    fsMocks.readFileSync.mockImplementation((p: any) => {
+      const path = String(p);
+      if (path.endsWith('/knowledge-base/config.json')) return configContent;
+      return '';
+    });
+  }
+
+  // Simulate a non-zero mmrag exit: execFileSync throws an error carrying stderr,
+  // exactly as it does on a real FTS/RRF failure.
+  function mockMmragNonZeroExit(stderr: string): void {
+    execFileSyncMock.mockImplementation(() => {
+      const e = new Error('Command failed') as Error & { stderr?: string; status?: number };
+      e.stderr = stderr;
+      e.status = 1;
+      throw e;
+    });
+  }
+
+  it('hybrid ON + non-zero mmrag exit: SURFACES (throws KBHybridQueryError, carries stderr)', () => {
+    mockKbWithConfigContent('{"hybrid_search": true}');
+    mockMmragNonZeroExit('sqlite3.OperationalError: no such table: chunks');
+
+    let caught: unknown;
+    try {
+      queryKnowledgeBase(dummyPaths, 'q', { ...baseOptions, scope: 'shared' });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(KBHybridQueryError);
+    expect((caught as Error).message).toMatch(/hybrid_search query failed/);
+    // The underlying mmrag stderr must be propagated, not discarded.
+    expect((caught as Error).message).toContain('no such table');
+  });
+
+  it('hybrid OFF + non-zero mmrag exit: NEUTRAL — returns empty, never throws (today\'s behavior)', () => {
+    mockKbWithConfigContent('{"hybrid_search": false}');
+    mockMmragNonZeroExit('some unrelated failure');
+
+    let result!: ReturnType<typeof queryKnowledgeBase>;
+    expect(() => {
+      result = queryKnowledgeBase(dummyPaths, 'q', { ...baseOptions, scope: 'shared' });
+    }).not.toThrow();
+    expect(result.results).toEqual([]);
+    expect(result.total).toBe(0);
+  });
+
+  it('flag key ABSENT + non-zero mmrag exit: NEUTRAL (default-off swallow)', () => {
+    mockKbWithConfigContent('{"similarity_threshold": 0.5}');
+    mockMmragNonZeroExit('boom');
+
+    let result!: ReturnType<typeof queryKnowledgeBase>;
+    expect(() => {
+      result = queryKnowledgeBase(dummyPaths, 'q', { ...baseOptions, scope: 'shared' });
+    }).not.toThrow();
+    expect(result.results).toEqual([]);
+  });
+
+  it('hybrid ON + sidecar missing (exit 0, applied:false): VISIBLE warn + vector-only results, no throw', () => {
+    mockKbWithConfigContent('{"hybrid_search": true}');
+    // mmrag degrades to vector-only and reports it in the JSON (exit 0).
+    execFileSyncMock.mockReturnValue(
+      JSON.stringify({
+        hybrid: { enabled: true, applied: false, reason: 'sidecar-missing' },
+        results: [{ content: 'vec', similarity: 0.8, source: 'v.md', type: 'markdown' }],
+      }),
+    );
+
+    let result!: ReturnType<typeof queryKnowledgeBase>;
+    expect(() => {
+      result = queryKnowledgeBase(dummyPaths, 'q', { ...baseOptions, scope: 'shared' });
+    }).not.toThrow();
+    // Vector-only results are still returned (degrade, not failure).
+    expect(result.results.map((r) => r.source_file)).toEqual(['v.md']);
+    // The degrade is surfaced as a visible [kb] warning.
+    expect(warnLog.some((m) => m.includes('[kb]') && /sidecar missing/i.test(m))).toBe(true);
   });
 });

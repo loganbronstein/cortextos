@@ -21,6 +21,8 @@ import hashlib
 import json
 import mimetypes
 import os
+import re
+import sqlite3
 import subprocess
 import sys
 import time
@@ -1122,6 +1124,16 @@ def cmd_ingest(args):
         print(f"  Skipped: {skipped} (already existed or empty)")
     if errors:
         print(f"  Errors: {errors}")
+    # Phase-2 hybrid: keep the BM25 sidecar in sync when it already exists (the
+    # Chroma ingest already succeeded; loud-warn on failure — repair via fts-build).
+    if total > 0 and fts_db_exists():
+        try:
+            conn = fts_connect()
+            n = fts_sync_collection(conn, collection, collection_name)
+            conn.close()
+            print(f"  FTS sidecar synced: {n} chunk(s) for '{collection_name}'")
+        except Exception as e:
+            print(f"  [hybrid] WARNING: FTS sidecar sync failed ({e}) — run `fts-build` to repair")
     print(_tracker.summary_line())
 
 
@@ -1148,6 +1160,222 @@ def deduplicate_results(results, similarity_ratio=0.85):
         if not is_dup:
             deduped.append(r)
     return deduped
+
+
+# ---------------------------------------------------------------------------
+# Phase-2 Hybrid: BM25 keyword sidecar (SQLite FTS5, "raw-v1").
+#
+# A SEPARATE SQLite DB (NEVER touches chroma.sqlite3) mirroring the raw chunk
+# text of the existing Chroma collections, so BM25 lexical search can be fused
+# with vector search via RRF (see cmd_query, gated by config `hybrid_search`).
+# Identity = (collection, doc_id) where doc_id is the Chroma chunk id (the RRF
+# join key). The sidecar is a pure derivative of Chroma — `fts-build` (re)builds
+# it; ingest/delete/reset keep it in sync; deleting the file rolls it back.
+# ---------------------------------------------------------------------------
+FTS_DB = Path(os.environ.get("MMRAG_FTS_DB", str(CHROMADB_DIR.parent / "fts" / "raw-v1.db")))
+
+
+def fts_connect(db_path=None):
+    """Open (creating dir + FTS5 schema if needed) the sidecar DB."""
+    path = Path(db_path) if db_path else FTS_DB
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5("
+        "collection UNINDEXED, doc_id UNINDEXED, source UNINDEXED, "
+        "filename UNINDEXED, chunk_index UNINDEXED, type UNINDEXED, text, "
+        "tokenize='porter unicode61')"
+    )
+    conn.commit()
+    return conn
+
+
+def fts_db_exists(db_path=None):
+    return (Path(db_path) if db_path else FTS_DB).exists()
+
+
+def fts_sanitize_query(query):
+    """Turn an arbitrary NL query into a safe FTS5 MATCH expression: extract word
+    tokens and OR them as quoted terms, so FTS5 operators / punctuation / quotes /
+    hyphens never raise a MATCH syntax error. Returns '' when no usable token."""
+    terms = re.findall(r"\w+", (query or "").lower())
+    if not terms:
+        return ""
+    return " OR ".join('"' + t + '"' for t in terms)
+
+
+def fts_sync_collection(conn, collection_obj, collection_name):
+    """Rebuild one collection's sidecar rows from its current Chroma chunks
+    (delete-then-insert = an exact mirror). Returns the indexed row count."""
+    conn.execute("DELETE FROM chunks WHERE collection = ?", (collection_name,))
+    data = collection_obj.get(include=["documents", "metadatas"])
+    ids = data.get("ids") or []
+    docs = data.get("documents") or []
+    metas = data.get("metadatas") or []
+    rows = []
+    for i, doc_id in enumerate(ids):
+        text = docs[i] if i < len(docs) else ""
+        if not text:
+            continue
+        meta = metas[i] if i < len(metas) else {}
+        rows.append((
+            collection_name, doc_id,
+            str(meta.get("source", "")), str(meta.get("filename", "")),
+            str(meta.get("chunk_index", "")), str(meta.get("type", "")), text,
+        ))
+    if rows:
+        conn.executemany(
+            "INSERT INTO chunks (collection, doc_id, source, filename, chunk_index, type, text) "
+            "VALUES (?,?,?,?,?,?,?)", rows,
+        )
+    conn.commit()
+    return len(rows)
+
+
+def fts_delete_docs(conn, collection_name, doc_ids):
+    """Delete specific (collection, doc_id) rows — keeps the sidecar consistent
+    with Chroma deletes."""
+    if not doc_ids:
+        return
+    conn.executemany(
+        "DELETE FROM chunks WHERE collection = ? AND doc_id = ?",
+        [(collection_name, d) for d in doc_ids],
+    )
+    conn.commit()
+
+
+def fts_search(conn, collection_name, query, k, type_filter=None):
+    """BM25 search within one collection. Returns [(doc_id, rank_pos)] best-first
+    (rank_pos = 0-based position, for RRF). Empty query -> []."""
+    match = fts_sanitize_query(query)
+    if not match:
+        return []
+    sql = (
+        "SELECT doc_id FROM chunks WHERE chunks MATCH ? AND collection = ? "
+        + ("AND type = ? " if type_filter else "")
+        + "ORDER BY bm25(chunks) LIMIT ?"
+    )
+    params = [match, collection_name] + ([type_filter] if type_filter else []) + [k]
+    cur = conn.execute(sql, params)
+    return [(row[0], pos) for pos, row in enumerate(cur.fetchall())]
+
+
+def cmd_fts_build(args):
+    """Build / rebuild the FTS5 sidecar from the current Chroma collections.
+
+    NEVER creates a Chroma collection. Absent --collection (or the literal `--collection all`)
+    means EVERY existing collection; an explicit name must already exist (fail closed, non-zero
+    exit). Previously this routed any name through get_or_create_collection, so a typo like
+    `--collection all` silently MATERIALIZED an empty collection in the Chroma store and mutated
+    an otherwise frozen snapshot. We now resolve against list_collections() and use the
+    non-creating chroma.get_collection()."""
+    conn = fts_connect()
+    chroma = get_chroma_client()
+    existing = [c.name if hasattr(c, "name") else c for c in chroma.list_collections()]
+    requested = getattr(args, "collection", None)
+    if not requested or requested == "all":
+        names = existing
+    elif requested in existing:
+        names = [requested]
+    else:
+        conn.close()
+        print(f"fts-build: collection '{requested}' does not exist "
+              f"(have: {', '.join(existing) or 'none'}). Omit --collection (or use "
+              f"--collection all) to build every collection. NOT creating it.", file=sys.stderr)
+        sys.exit(1)
+    total = 0
+    for name in names:
+        col = chroma.get_collection(name)  # non-creating; names verified to exist above
+        n = fts_sync_collection(conn, col, name)
+        total += n
+        print(f"  FTS indexed {n} chunk(s) for '{name}'")
+    conn.close()
+    print(f"Done. FTS sidecar built: {total} chunk(s) across {len(names)} collection(s) -> {FTS_DB}")
+
+
+RRF_K = 60  # Reciprocal Rank Fusion constant (standard).
+
+
+def _cosine(a, b):
+    """Cosine similarity of two vectors (for hydrating BM25-only hits' display sim)."""
+    import math
+    if a is None or b is None or len(a) == 0 or len(b) == 0:
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def hybrid_fuse(vec_rows, bm25, threshold, collection, collection_name, query_embedding):
+    """Phase-2 RRF fusion of vector + BM25 rankings (codex-gated contract).
+
+    vec_rows: [{id, content, similarity, metadata, vrank(0-based)}] (all vector hits, pre-threshold).
+    bm25:     [(doc_id, brank(0-based))] from fts_search.
+    CANDIDATE = vector hit with similarity >= threshold OR any BM25 hit (BM25 bypasses the cosine
+    floor — that is how a strong lexical/low-cosine hit like q07 gets through). rank_score(d) =
+    sum 1/(RRF_K + rank) over the rankings d appears in. FTS-only candidates are hydrated from Chroma
+    (content/metadata + a computed cosine `similarity` for display); a sidecar doc_id absent from
+    Chroma is a stale row -> pruned + logged. Returns rows {id, content, similarity, metadata,
+    rank_score} sorted by rank_score desc."""
+    vec_by_id = {r["id"]: r for r in vec_rows}
+    bm25_rank = {doc_id: brank for doc_id, brank in bm25}
+
+    cand_ids = [r["id"] for r in vec_rows if r["similarity"] >= threshold]
+    seen = set(cand_ids)
+    for doc_id, _ in bm25:
+        if doc_id not in seen:
+            cand_ids.append(doc_id)
+            seen.add(doc_id)
+
+    # Hydrate BM25-only candidates not in the vector fetch.
+    missing = [d for d in cand_ids if d not in vec_by_id]
+    hydrated = {}
+    if missing:
+        got = collection.get(ids=missing, include=["documents", "metadatas", "embeddings"])
+        gids = got.get("ids") or []
+        embs = got.get("embeddings")
+        for i, gid in enumerate(gids):
+            emb = embs[i] if embs is not None and i < len(embs) else None
+            hydrated[gid] = {
+                "id": gid,
+                "content": got["documents"][i] if got.get("documents") else "",
+                "similarity": _cosine(query_embedding, emb),
+                "metadata": got["metadatas"][i] if got.get("metadatas") else {},
+            }
+        stale = [d for d in missing if d not in set(gids)]
+        if stale:
+            print(f"[hybrid] pruned {len(stale)} stale sidecar row(s) not in Chroma "
+                  f"(collection={collection_name})", file=sys.stderr)
+            try:
+                conn = fts_connect()
+                fts_delete_docs(conn, collection_name, stale)
+                conn.close()
+            except Exception as e:
+                print(f"[hybrid] WARNING: stale-row prune failed ({e})", file=sys.stderr)
+
+    fused = []
+    for doc_id in cand_ids:
+        base = vec_by_id.get(doc_id) or hydrated.get(doc_id)
+        if base is None:
+            continue  # stale + pruned
+        score = 0.0
+        vr = base.get("vrank")
+        if vr is not None:
+            score += 1.0 / (RRF_K + vr)
+        if doc_id in bm25_rank:
+            score += 1.0 / (RRF_K + bm25_rank[doc_id])
+        fused.append({
+            "id": doc_id,
+            "content": base["content"],
+            "similarity": base["similarity"],
+            "metadata": base["metadata"],
+            "rank_score": score,
+        })
+    fused.sort(key=lambda r: r["rank_score"], reverse=True)
+    return fused
 
 
 def cmd_query(args):
@@ -1207,19 +1435,49 @@ def cmd_query(args):
         else:
             raise
 
-    # Filter by similarity threshold
-    filtered = []
+    # Build the vector candidate rows (all fetched, with 0-based rank + similarity).
+    vec_rows = []
     if results["ids"] and results["ids"][0]:
         for i, doc_id in enumerate(results["ids"][0]):
             distance = results["distances"][0][i] if results["distances"] else 0
-            similarity = 1 - distance
-            if similarity >= threshold:
-                filtered.append({
-                    "id": doc_id,
-                    "content": results["documents"][0][i] if results["documents"] else "",
-                    "similarity": similarity,
-                    "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
-                })
+            vec_rows.append({
+                "id": doc_id,
+                "content": results["documents"][0][i] if results["documents"] else "",
+                "similarity": 1 - distance,
+                "metadata": results["metadatas"][0][i] if results["metadatas"] else {},
+                "vrank": i,
+            })
+
+    # Phase-2 hybrid (codex-gated; config flag `hybrid_search`, default off): RRF-fuse
+    # vector + BM25. `rank_score` is the ORDERING key (= RRF when hybrid applied, =
+    # similarity otherwise); raw cosine stays as `similarity` for display/threshold/debug.
+    hybrid_on = config.get("hybrid_search") is True
+    hybrid_applied = False
+    hybrid_reason = None
+    if hybrid_on and not fts_db_exists():
+        hybrid_reason = "sidecar-missing"
+        print("[hybrid] WARNING: hybrid_search enabled but FTS sidecar missing -> vector-only "
+              "(run `mmrag fts-build`)", file=sys.stderr)
+    if hybrid_on and fts_db_exists():
+        bm25_type = None
+        if type_filter:
+            _tmap = {"image": "image", "video": "video_chunk", "text": "text",
+                     "pdf": "pdf_page", "audio": "audio"}
+            bm25_type = _tmap.get(type_filter, type_filter)
+        conn = fts_connect()
+        try:
+            bm25 = fts_search(conn, collection_name, args.question, fetch_k, type_filter=bm25_type)
+        finally:
+            conn.close()
+        filtered = hybrid_fuse(vec_rows, bm25, threshold, collection, collection_name, query_embedding)
+        hybrid_applied = True
+    else:
+        # Vector-only: cosine threshold filter; rank_score = similarity (ordering unchanged).
+        filtered = [
+            {"id": r["id"], "content": r["content"], "similarity": r["similarity"],
+             "metadata": r["metadata"], "rank_score": r["similarity"]}
+            for r in vec_rows if r["similarity"] >= threshold
+        ]
 
     # Deduplicate near-identical results (same file in multiple lesson folders)
     filtered = deduplicate_results(filtered)
@@ -1254,6 +1512,7 @@ def cmd_query(args):
             "query": args.question,
             "collection": collection_name,
             "result_count": len(filtered),
+            "hybrid": {"enabled": hybrid_on, "applied": hybrid_applied, "reason": hybrid_reason},
             "source_files": source_files,
             "results": [],
         }
@@ -1263,6 +1522,7 @@ def cmd_query(args):
                 "content": r["content"] if show_full else r["content"][:DEFAULT_PREVIEW_CHARS],
                 "content_full_length": len(r["content"]),
                 "similarity": round(r["similarity"], 4),
+                "rank_score": round(r.get("rank_score", r["similarity"]), 6),
                 "source": meta.get("source", ""),
                 "type": meta.get("type", ""),
                 "filename": meta.get("filename", ""),
@@ -1481,6 +1741,15 @@ def cmd_delete(args):
     collection.delete(ids=ids_to_delete)
     print(f"Deleted {len(ids_to_delete)} chunk(s) from '{collection_name}' for: {source_path}")
 
+    # Phase-2 hybrid: keep the BM25 sidecar consistent with the Chroma delete.
+    if fts_db_exists():
+        try:
+            conn = fts_connect()
+            fts_delete_docs(conn, collection_name, ids_to_delete)
+            conn.close()
+        except Exception as e:
+            print(f"  [hybrid] WARNING: FTS sidecar delete failed ({e}) — run `fts-build` to repair")
+
 
 def cmd_reset(args):
     if not args.confirm:
@@ -1499,6 +1768,10 @@ def cmd_reset(args):
     if MEDIA_DIR.exists():
         shutil.rmtree(MEDIA_DIR)
         MEDIA_DIR.mkdir(parents=True)
+
+    # Phase-2 hybrid: drop the BM25 sidecar too (it is a pure derivative of Chroma).
+    if fts_db_exists():
+        FTS_DB.unlink()
 
     print(f"Reset complete. Deleted {count} collection(s) and cleared media cache.")
 
@@ -1556,6 +1829,10 @@ def main():
     p_usage.add_argument("--json", "-j", action="store_true", help="Output as JSON")
     p_usage.add_argument("--reset", action="store_true", help="Reset usage data")
 
+    # fts-build (Phase-2 hybrid: BM25 FTS5 sidecar)
+    p_fts = sub.add_parser("fts-build", help="Build/rebuild the BM25 FTS5 sidecar from Chroma (Phase-2 hybrid)")
+    p_fts.add_argument("--collection", "-c", help="Build only this collection (default: all)")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -1571,6 +1848,7 @@ def main():
         "delete": cmd_delete,
         "reset": cmd_reset,
         "usage": cmd_usage,
+        "fts-build": cmd_fts_build,
     }
 
     commands[args.command](args)

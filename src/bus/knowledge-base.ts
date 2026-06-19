@@ -88,6 +88,42 @@ export function shouldMergeCollectionsByScore(env: Record<string, string>): bool
 }
 
 /**
+ * Read the `hybrid_search` feature flag from the KB runtime config (MMRAG_CONFIG).
+ * Phase-2: when true, mmrag fuses BM25 keyword retrieval with vector retrieval via RRF.
+ * This wrapper reads the SAME flag mmrag does so it can scope its fail-loud behavior to
+ * hybrid-enabled queries only — a non-zero mmrag exit (a real FTS/RRF failure) must
+ * SURFACE when hybrid is on instead of being masked as an empty result set, while
+ * non-hybrid queries keep today's swallow-to-empty behavior (neutral).
+ *
+ * Fail-safe: returns false on a missing/unreadable file, invalid JSON, a missing key,
+ * or any non-`true` value. Default-off; an absent key is NOT an error and emits no warning.
+ */
+export function shouldUseHybridSearch(env: Record<string, string>): boolean {
+  try {
+    const cfg = JSON.parse(readFileSync(env.MMRAG_CONFIG, 'utf-8')) as {
+      hybrid_search?: unknown;
+    };
+    return cfg.hybrid_search === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Thrown when `hybrid_search` is enabled and the underlying mmrag query exits non-zero
+ * (a real FTS/RRF failure). Phase-2 fail-loud contract: such an error must surface to the
+ * caller, never be silently swallowed into a "0 results" response indistinguishable from a
+ * legitimately empty query. A MISSING sidecar is NOT this error — mmrag degrades to
+ * vector-only (exit 0) with a visible warning instead.
+ */
+export class KBHybridQueryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'KBHybridQueryError';
+  }
+}
+
+/**
  * Build the full env object needed by mmrag.py calls.
  */
 function buildKBEnv(
@@ -213,6 +249,10 @@ export function queryKnowledgeBase(
       break;
   }
 
+  // Phase-2: read the hybrid_search flag the SAME way mmrag does so fail-loud is scoped
+  // to hybrid-enabled queries only. Default-off => behaves byte-identically to today.
+  const hybridEnabled = shouldUseHybridSearch(env);
+
   const runQuery = (col: string): string | null => {
     try {
       return execFileSync(pythonPath, [
@@ -226,7 +266,17 @@ export function queryKnowledgeBase(
         timeout: 30000,
         env,
       });
-    } catch {
+    } catch (err) {
+      // Phase-2 fail-loud: when hybrid_search is enabled, a non-zero mmrag exit is a real
+      // FTS/RRF failure and MUST surface — not be masked as "0 results". The sidecar-missing
+      // degrade is exit-0 (handled as a warning in parseOutput), so it never lands here.
+      // Non-hybrid queries keep today's neutral swallow-to-empty behavior.
+      if (hybridEnabled) {
+        const stderr = String((err as { stderr?: unknown }).stderr ?? '').trim();
+        throw new KBHybridQueryError(
+          `[kb] hybrid_search query failed (collection=${col}): ${stderr || (err as Error).message}`,
+        );
+      }
       return null;
     }
   };
@@ -239,17 +289,31 @@ export function queryKnowledgeBase(
     if (jsonStart === -1) return [];
     try {
       const raw = JSON.parse(trimmed.slice(jsonStart)) as {
-        results?: Array<{ content?: string; result?: string; similarity?: number; source?: string; type?: string }>;
+        results?: Array<{ content?: string; result?: string; similarity?: number; rank_score?: number; source?: string; type?: string }>;
         result_count?: number;
         query?: string;
         collection?: string;
+        hybrid?: { enabled?: boolean; applied?: boolean; reason?: string };
       };
+      // Phase-2 fail-loud: a missing FTS sidecar is a non-fatal degrade — mmrag falls back
+      // to vector-only (exit 0) and reports it in the JSON. Surface it as a visible warning
+      // so an operator who enabled hybrid_search but never built the sidecar is not silently
+      // running vector-only without knowing it.
+      if (raw.hybrid?.enabled && raw.hybrid?.applied === false && raw.hybrid?.reason === 'sidecar-missing') {
+        console.warn(
+          "[kb] hybrid_search enabled but FTS sidecar missing — using vector-only results. " +
+          "Run 'mmrag fts-build' to enable hybrid retrieval.",
+        );
+      }
       return (raw.results || []).map((r) => ({
         content: r.content || r.result || '',
         source_file: r.source || '',
         org,
         agent_name: agent,
-        score: r.similarity ?? 0,
+        // Phase-2 hybrid ranking-key contract: order by rank_score (= RRF when
+        // hybrid_search is on, = similarity otherwise); fall back to similarity for
+        // non-hybrid / older mmrag output. mergeByScore (Fix A) sorts by this `score`.
+        score: r.rank_score ?? r.similarity ?? 0,
         doc_type: r.type || 'markdown',
       }));
     } catch {
@@ -282,8 +346,11 @@ export function queryKnowledgeBase(
         collection: collections.length === 1 ? lastCollection : `shared-${org}`,
       };
     }
-  } catch {
-    // Failed — return empty
+  } catch (err) {
+    // Fail-loud (Phase-2): a hybrid_search query failure must propagate, never be masked
+    // as an empty result set. All other (non-hybrid) failures stay neutral — return empty,
+    // exactly as before.
+    if (err instanceof KBHybridQueryError) throw err;
   }
 
   return { results: [], total: 0, query: question, collection: `shared-${org}` };
