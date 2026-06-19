@@ -3,6 +3,26 @@
 You are the PRE-DEPLOY exit gate for a completed build. Return a verdict: **GO**, **FIX**, or **SCRAP**.
 Be adversarial. This is the gate that decides whether code reaches a Logan-gated production flip.
 
+## ⟳ RE-GATE — your 3 blockers are addressed (commit f6f63ec; disclosure #3 corrected below)
+You returned FIX on the first pass (q13 tradeoff accepted, no RRF retune). Status of each blocker:
+- **Blocker 1 (fts-build creates a Chroma collection) — FIXED in code + tests + LIVE PROOF.**
+  `cmd_fts_build` no longer routes names through get_or_create. Absent/`all` = existing collections;
+  an explicit missing name FAILS CLOSED (non-zero exit, NOT created); builds via non-creating
+  `chroma.get_collection`. +4 regression tests (test_hybrid `TestFtsBuildNoCreate`) assert
+  get_or_create is never reached. LIVE PROOF on a real temp Chroma: `fts-build --collection all` built
+  the 2 seeded collections and created NO `all`; `--collection bogus` exited 1 without creating it;
+  collection set unchanged. (Re-run it yourself: seed a temp Chroma, run both, list collections.)
+- **Blocker 2 (dashboard sidecar-missing not visible) — FIXED in code + tests.** The route now reads
+  `parsed.hybrid`; on `enabled:true, applied:false, reason:"sidecar-missing"` it console.warns AND adds
+  a nonfatal `hybridDegraded:{reason}` field to the response. +2 route tests.
+- **Blocker 3 (build-pin disclosure false) — CORRECTED, no code change.** See disclosure #3 below for the
+  accurate, live-verified state (you were right: live dist already carries the ranking-key wrapper code).
+
+RERUN EVIDENCE (no `npm run build`): root `tsc --noEmit` clean; dashboard `tsc --noEmit` 0 errors;
+`tests/unit/bus/knowledge-base.test.ts` 33/33; dashboard `kb/search/__tests__/route.test.ts` 6/6;
+`test_hybrid.py` 20/20 (+4); `test_eval_harness.py` 31/31. Branch HEAD = f6f63ec on feat/kb-phase2-hybrid.
+Please re-gate from the corrected packet + live proof, not the implementation claim alone.
+
 ## What this is
 Phase-2 adds BM25 keyword retrieval fused with the existing vector retrieval via Reciprocal Rank
 Fusion (RRF, k=60), behind a DEFAULT-OFF config flag `hybrid_search`, to fix lexical/exact-token
@@ -44,20 +64,38 @@ phase0-baseline-20260617T002417Z.
    Recall@5 is FLAT (q07 +1 @5 offset by q13 -1 @5). The plan's "NO VEC regression" criterion is
    therefore VIOLATED. Is this an acceptable net-positive tradeoff for GO, a FIX (and what fix, given
    RRF k is pinned), or a SCRAP? This is the central question.
-2. **Frozen-snapshot mutation, caught + restored.** During the offline lift I ran `mmrag fts-build
-   --collection all` — but "all" is a LITERAL collection name (no "all" keyword), so
+2. **Frozen-snapshot mutation, caught + restored (collection-level fidelity).** During the offline lift
+   I ran `mmrag fts-build --collection all` — "all" was a LITERAL collection name (no keyword), so
    get_or_create_collection("all") CREATED an empty `all` collection in the snapshot's chroma.sqlite3.
    I deleted it immediately; the 7 real collections were verified intact with original counts
    (boss 1229/codex 571/analyst 192/marketing 4754/shared-cortex 655/coder 204/scribe 888), no data
    loss. chroma.sqlite3 bytes changed by the create+delete churn but the collection set + per-collection
    data are restored. The offline-lift numbers above were produced by a SEPARATE, correct run
-   (fts-build with NO --collection flag, 8493 chunks across 7 collections). Does this invalidate the
-   measurement or the snapshot's value as a frozen baseline for future phases?
-3. **Build-pin status.** NO `npm run build` was run this entire build — live `dist/` still equals
-   main; all Phase-2 code lives only on the branch. Verification was typecheck (tsc --noEmit, no dist
-   write) + vitest (runs src/ via transform, not dist) + python unittest + temp/eval sidecars. The
-   build-to-live-dist happens only at the routed DEPLOY step AFTER your GO. Is this pre-deploy posture
-   correct, or is there a leak where branch code could reach live agents before deploy?
+   (fts-build with NO --collection flag, 8493 chunks across 7 collections). Per your ruling I now state
+   this as COLLECTION-LEVEL (not byte-level) baseline fidelity: the lift is valid (7 collections + counts
+   intact, separate correct sidecar build), but this snapshot is no longer byte-frozen — any future phase
+   needing byte-fidelity should re-snapshot from a clean copy. ROOT CAUSE now FIXED (blocker 1, commit
+   f6f63ec: fts-build can no longer create a collection), so this cannot recur. Acceptable?
+3. **Build-pin status (CORRECTED — prior disclosure was false).** I verified live state, not memory.
+   Global `cortextos` -> `/Users/loganbronstein/cortextos/dist/cli.js`. That live `dist/cli.js` (built
+   2026-06-18T11:21) ALREADY CONTAINS Phase-2 RANKING-KEY wrapper code: `rank_score` parse (grep: 2
+   hits) + `merge_collections_by_score` (Fix A, 1) + a `hybrid_search` reference (1). It does NOT
+   contain THIS session's fail-loud (`shouldUseHybridSearch`/`KBHybridQueryError`: 0 hits) — those
+   live only on the branch. So "live dist = main" is FALSE: the ranking-key wrapper (branch commit
+   f153403, NOT on main@31662d4) reached live dist via a prior build-pin leak (the documented
+   2026-06-13 "dist rebuilt in place during gate work" process learning). ALSO: the working tree is
+   checked out on `feat/kb-phase2-hybrid`, and the wrapper invokes `knowledge-base/scripts/mmrag.py`
+   from this tree (interpreted, not built) — so the on-disk HYBRID mmrag.py is ALSO live.
+   WHY IT IS LIVE-NEUTRAL anyway: live config (`~/.cortextos/default/orgs/cortex/knowledge-base/config.json`)
+   has `merge_collections_by_score:true` (Fix A, intended/deployed) but NO `hybrid_search` key -> mmrag
+   takes the vector-only path -> `rank_score == similarity` -> wrapper ordering unchanged; AND there is
+   NO prod FTS sidecar (`.../knowledge-base/fts/` absent), so even if the flag were set mmrag would
+   degrade to vector-only. No prod hybrid flip. COMMITMENT: NO `npm run build` this entire session
+   (verification was tsc --noEmit + vitest-over-src + python unittest + temp/eval sidecars only); the
+   build-to-live-dist + prod sidecar happen ONLY at the routed DEPLOY step after your GO, and I will run
+   no further live-dist build before then. QUESTION: is this corrected posture acceptable to gate on
+   (live behavior neutral, activation still requires deploy + a Logan-gated flag flip), and should the
+   deploy step rebuild dist cleanly from the merge commit so live dist provably equals the merged code?
 4. **Harness fidelity note.** The harness queries mmrag at `--threshold 0`; the hybrid view applies NO
    cosine floor on ordering/recall (it trusts mmrag's hybrid candidate selection, which deliberately
    lets BM25 bypass the cosine floor — that is how q07 gets through). The negative-control FP check
