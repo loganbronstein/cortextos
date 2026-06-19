@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mmrag  # noqa: E402
@@ -157,6 +158,66 @@ class TestRRFFuse(unittest.TestCase):
         self.assertIsNotNone(row)
         self.assertEqual(row["content"], "hydrated text")
         self.assertAlmostEqual(row["similarity"], 1.0)  # cosine([1,0],[1,0]) hydrated for display
+
+
+class TestFtsBuildNoCreate(unittest.TestCase):
+    """Blocker fix: `fts-build` must NEVER create a Chroma collection. The old code routed an
+    explicit --collection name through get_or_create_collection, so `--collection all` (a typo,
+    not a keyword) materialized an empty 'all' collection and mutated the frozen snapshot."""
+
+    class _FakeClient:
+        def __init__(self, names):
+            self._cols = {n: FakeCollection([("d1", "alpha note", {"type": "text"})]) for n in names}
+            self.created = []  # records get_or_create_collection calls — MUST stay empty
+
+        def list_collections(self):
+            return [type("C", (), {"name": n})() for n in self._cols]
+
+        def get_collection(self, name):  # non-creating; raises if missing
+            if name not in self._cols:
+                raise ValueError(f"Collection {name} does not exist")
+            return self._cols[name]
+
+        def get_or_create_collection(self, name, **kw):  # must NOT be reached from fts-build
+            self.created.append(name)
+            self._cols[name] = FakeCollection([])
+            return self._cols[name]
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.db = os.path.join(self.tmp, "raw-v1.db")
+
+    def _run(self, collection, names=("shared-cortex", "agent-coder")):
+        client = self._FakeClient(list(names))
+        args = type("A", (), {"collection": collection})()
+        rc = None
+        with mock.patch.object(mmrag, "get_chroma_client", return_value=client), \
+             mock.patch.object(mmrag, "FTS_DB", Path(self.db)):
+            try:
+                mmrag.cmd_fts_build(args)
+            except SystemExit as e:
+                rc = e.code
+        return client, rc
+
+    def test_collection_all_builds_existing_without_creating(self):
+        client, rc = self._run("all")
+        self.assertIsNone(rc)                 # 'all' is not an error
+        self.assertEqual(client.created, [])  # and it NEVER created an 'all' collection
+
+    def test_absent_collection_builds_all_existing_without_creating(self):
+        client, rc = self._run(None)
+        self.assertIsNone(rc)
+        self.assertEqual(client.created, [])
+
+    def test_explicit_missing_collection_fails_closed_no_create(self):
+        client, rc = self._run("does-not-exist")
+        self.assertEqual(rc, 1)               # fail closed, non-zero exit
+        self.assertEqual(client.created, [])  # did NOT create the missing collection
+
+    def test_explicit_existing_collection_ok_no_create(self):
+        client, rc = self._run("agent-coder")
+        self.assertIsNone(rc)
+        self.assertEqual(client.created, [])
 
 
 if __name__ == "__main__":

@@ -1261,16 +1261,31 @@ def fts_search(conn, collection_name, query, k, type_filter=None):
 
 
 def cmd_fts_build(args):
-    """Build / rebuild the FTS5 sidecar from the current Chroma collections."""
+    """Build / rebuild the FTS5 sidecar from the current Chroma collections.
+
+    NEVER creates a Chroma collection. Absent --collection (or the literal `--collection all`)
+    means EVERY existing collection; an explicit name must already exist (fail closed, non-zero
+    exit). Previously this routed any name through get_or_create_collection, so a typo like
+    `--collection all` silently MATERIALIZED an empty collection in the Chroma store and mutated
+    an otherwise frozen snapshot. We now resolve against list_collections() and use the
+    non-creating chroma.get_collection()."""
     conn = fts_connect()
     chroma = get_chroma_client()
-    if getattr(args, "collection", None):
-        names = [args.collection]
+    existing = [c.name if hasattr(c, "name") else c for c in chroma.list_collections()]
+    requested = getattr(args, "collection", None)
+    if not requested or requested == "all":
+        names = existing
+    elif requested in existing:
+        names = [requested]
     else:
-        names = [c.name if hasattr(c, "name") else c for c in chroma.list_collections()]
+        conn.close()
+        print(f"fts-build: collection '{requested}' does not exist "
+              f"(have: {', '.join(existing) or 'none'}). Omit --collection (or use "
+              f"--collection all) to build every collection. NOT creating it.", file=sys.stderr)
+        sys.exit(1)
     total = 0
     for name in names:
-        col = get_chroma_collection(name)
+        col = chroma.get_collection(name)  # non-creating; names verified to exist above
         n = fts_sync_collection(conn, col, name)
         total += n
         print(f"  FTS indexed {n} chunk(s) for '{name}'")

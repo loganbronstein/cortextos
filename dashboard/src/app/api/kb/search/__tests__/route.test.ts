@@ -114,6 +114,45 @@ describe('GET /api/kb/search — Phase-2 fail-loud (hybrid FTS errors surface)',
   });
 });
 
+describe('GET /api/kb/search — Phase-2 sidecar-missing degrade is visible', () => {
+  it('hybrid ON + sidecar missing (exit 0, applied:false): surfaces hybridDegraded + warns, still returns results', async () => {
+    mockConfig('{"hybrid_search": true}');
+    // mmrag degraded to vector-only and reported it in the JSON (exit 0, results present).
+    execFileSyncMock.mockReturnValue(
+      JSON.stringify({
+        hybrid: { enabled: true, applied: false, reason: 'sidecar-missing' },
+        results: [{ content: 'vec', similarity: 0.8, rank_score: 0.8, source: 'v.md', type: 'markdown' }],
+      }),
+    );
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const res = await callGet({ q: 'q', org: 'testorg', scope: 'shared' });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Vector-only results still returned (degrade, not failure)...
+    expect(body.results.map((r: { source_file: string }) => r.source_file)).toEqual(['v.md']);
+    // ...and the degrade is surfaced as a nonfatal response field + a console warning.
+    expect(body.hybridDegraded).toEqual({ reason: 'sidecar-missing' });
+    expect(warnSpy.mock.calls.flat().join(' ')).toMatch(/sidecar missing/i);
+    warnSpy.mockRestore();
+  });
+
+  it('hybrid applied (sidecar present): no hybridDegraded field', async () => {
+    mockConfig('{"hybrid_search": true}');
+    execFileSyncMock.mockReturnValue(
+      JSON.stringify({
+        hybrid: { enabled: true, applied: true, reason: null },
+        results: [{ content: 'h', similarity: 0.7, rank_score: 0.05, source: 'h.md', type: 'markdown' }],
+      }),
+    );
+    const res = await callGet({ q: 'q', org: 'testorg', scope: 'shared' });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.hybridDegraded).toBeUndefined();
+  });
+});
+
 describe('GET /api/kb/search — Phase-2 ranking-key (orders by rank_score)', () => {
   it('scope=all sorts merged results by rank_score desc (NOT similarity)', async () => {
     mockConfig('{"hybrid_search": false}');

@@ -151,6 +151,12 @@ export async function GET(request: NextRequest) {
     hybridEnabled = false;
   }
 
+  // Phase-2: a missing FTS sidecar is a non-fatal degrade (mmrag falls back to vector-only,
+  // exit 0, and reports it in the JSON `hybrid` block). Surface it so an operator who enabled
+  // hybrid_search without building the sidecar isn't silently running vector-only. Mirrors the
+  // bus wrapper warning (src/bus/knowledge-base.ts).
+  let hybridDegraded: { reason: string } | null = null;
+
   /**
    * Run a single mmrag.py query against one collection.
    * Returns empty array for non-hybrid queries (callers handle missing/empty collections
@@ -196,6 +202,14 @@ export async function GET(request: NextRequest) {
     if (jsonStart === -1) return [];
     try {
       const parsed = JSON.parse(trimmed.slice(jsonStart));
+      const hy = parsed.hybrid;
+      if (hy && hy.enabled === true && hy.applied === false && hy.reason === 'sidecar-missing') {
+        hybridDegraded = { reason: 'sidecar-missing' };
+        console.warn(
+          "[api/kb/search] hybrid_search enabled but FTS sidecar missing — vector-only results. " +
+          "Run 'mmrag fts-build' to enable hybrid retrieval.",
+        );
+      }
       return parsed.results || [];
     } catch { return []; }
   }
@@ -284,7 +298,10 @@ export async function GET(request: NextRequest) {
     }
 
     if (allResults.length === 0) {
-      return Response.json({ results: [], total: 0, query: q, collection: `shared-${org}` });
+      return Response.json({
+        results: [], total: 0, query: q, collection: `shared-${org}`,
+        ...(hybridDegraded ? { hybridDegraded } : {}),
+      });
     }
 
     const results = allResults.map((r) => ({
@@ -306,6 +323,7 @@ export async function GET(request: NextRequest) {
       total: results.length,
       query: q,
       collection: collection || 'all',
+      ...(hybridDegraded ? { hybridDegraded } : {}),
     });
   } catch (err: unknown) {
     // Phase-2 fail-loud: a hybrid_search failure must surface as an error response, never
