@@ -28,16 +28,17 @@ const MODAL_RESTART_COOLDOWN_MS = 30_000; // after firing, suppress re-fire whil
 // Auth-wedge (401) gate tuning (codex RCA 401-auth-wedge 2026-06-21). A live 401 auth wedge
 // keeps a running PTY alive (handleExit never fires) while every model call fails, so daemon
 // process-liveness lies and heartbeats/inbox work silently stall until a restart reloads auth.
-// FALSE-POSITIVE GUARD: the fleet routinely QUOTES "API Error: 401" in incident reports (the RCA
-// itself, this very build task). Unlike the /compact modal, a 401-wedged session STILL renders the
-// input prompt, so !hasIdleInputPrompt cannot be the discriminator here. Instead require BOTH
-// (a) the 401 signature REPEATED (>=2 occurrences in the frame), and (b) the frame byte-STATIC
-// across consecutive polls — a healthy agent quoting the error is actively scrolling (tail mutates)
-// and a single quoted mention has one occurrence, so neither path trips. A truly wedged idle
-// session sits frozen at the repeated runtime error.
-const AUTH_WEDGE_MIN_OCCURRENCES = 2;       // repeated "API Error: 401" in the frame (excludes single quotes)
-const AUTH_WEDGE_FROZEN_POLLS = 3;          // consecutive byte-static polls with the signature before acting
-const AUTH_WEDGE_SCAN_LEN = 4000;           // chars of the current frame to scan (the runtime error is recent)
+// The real fleet incident (codex-verified against stored stdout) renders ONE padded error line per
+// failed call, with retries kilobytes apart — so a SINGLE current-frame runtime line is the signature
+// (requiring two 401s in one scan window missed the actual wedge). FALSE-POSITIVE GUARD: the fleet
+// routinely QUOTES the error in incident reports (the RCA, this build task). Two guards: (a) ADJACENCY
+// — the runtime joins the login prompt and the 401 on one line with a ·/-/dash connector, whereas a
+// report writes them as separate quoted strings ("Please run /login" + "API Error: 401"), which the
+// pattern does not match; (b) for a RESTART, the frame must be byte-STATIC across AUTH_WEDGE_FROZEN_POLLS
+// consecutive polls — a healthy agent quoting the error is actively scrolling and never freezes. (Unlike
+// the /compact modal, a 401 wedge STILL shows the input prompt, so !hasIdleInputPrompt is not usable.)
+const AUTH_WEDGE_FROZEN_POLLS = 3;          // consecutive byte-static polls with the signature = repeated evidence
+const AUTH_WEDGE_SCAN_LEN = 8000;           // chars of the current frame to scan (one padded runtime error screen)
 const AUTH_RESTART_COOLDOWN_MS = 60_000;    // after firing, suppress re-fire while preserve stop()+start() completes
 const AUTH_CIRCUIT_WINDOW_MS = 30 * 60_000; // AUTH_CIRCUIT_MAX restarts within this window trips the breaker
 const AUTH_CIRCUIT_MAX = 3;
@@ -45,19 +46,23 @@ const AUTH_CIRCUIT_PAUSE_MS = 30 * 60_000;  // pause auto-restarts after trippin
 
 /**
  * Detect the live Claude Code 401 auth-wedge signature in a PTY frame (codex RCA 401-auth-wedge).
- * Returns the "API Error: 401" occurrence count and whether the wedge shape is present with
- * REPEATED evidence (>= AUTH_WEDGE_MIN_OCCURRENCES). The repeated-occurrence gate is the primary
- * guard against a single QUOTED 401 mention (an incident report / this build task) triggering.
- * Signatures: "Please run /login" + "API Error: 401", or "API Error: 401 Invalid authentication
- * credentials", or "API Error: 401 The socket connection was closed unexpectedly".
+ * A SINGLE current-frame runtime line is sufficient — the login prompt joined to the 401 by a
+ * ·/-/dash separator ("Please run /login · API Error: 401 ..."), or a known 401 variant line. The
+ * adjacency join is the quote guard: an incident report writes the two as separate quoted strings,
+ * which does not match. Repeated evidence for a restart is the caller's 3-static-poll gate, NOT a
+ * second occurrence (real frames show one padded error line, retries KB apart). `occurrences` is
+ * returned for observability only and no longer gates `wedged`.
  */
 export function detectAuthWedge(frame: string): { wedged: boolean; occurrences: number } {
   const f = stripControlChars(frame);
   const occurrences = (f.match(/API Error:\s*401/gi) || []).length;
-  const hasLogin = /Please run \/login/i.test(f);
-  const hasVariant = /API Error:\s*401\s+(Invalid authentication credentials|The socket connection was closed unexpectedly)/i.test(f);
-  const shape = occurrences >= 1 && (hasLogin || hasVariant);
-  return { wedged: shape && occurrences >= AUTH_WEDGE_MIN_OCCURRENCES, occurrences };
+  // Runtime line: the login prompt joined to "API Error: 401" by a short run of whitespace /
+  // middle-dot / dash connectors (tolerant of the real "·"/"-"/spacing, and of "·" collapsing to
+  // spaces). The class excludes the +/quote chars a prose quote puts between the two strings, so an
+  // incident report ("Please run /login" + "API Error: 401") does NOT match.
+  const runtimeLine = /Please run \/login[\s·–—\-]{1,5}API Error:\s*401/i.test(f);
+  const variantLine = /API Error:\s*401\s+(Invalid authentication credentials|The socket connection was closed unexpectedly)/i.test(f);
+  return { wedged: runtimeLine || variantLine, occurrences };
 }
 
 /**

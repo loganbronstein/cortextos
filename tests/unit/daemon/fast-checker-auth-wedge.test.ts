@@ -13,18 +13,13 @@ vi.mock('child_process', () => ({
 import { FastChecker, detectAuthWedge } from '../../../src/daemon/fast-checker';
 import type { BusPaths } from '../../../src/types';
 
-// A realistic STATIC 401 auth-wedge frame: the runtime re-prints the login/401 signature
-// (>=2 occurrences) and sits at the input prompt — the codex RCA 401-auth-wedge shape.
-const realAuthWedge = [
-  '> what is the status',
-  'Please run /login',
-  'API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token expired"}}',
-  'Please run /login',
-  'API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token expired"}}',
-  '> ',
-].join('\n');
+// The REAL cleaned runtime shape (codex-verified): ONE padded error line that joins the login prompt
+// and the 401 with a "·" separator, sitting at the input prompt. Only ONE "API Error: 401".
+const realAuthWedge =
+  '> what is the status\n⏺ Please run /login · API Error: 401 Invalid authentication credentials\n\n❯ ';
 
-// A SINGLE quoted mention (like this very build task / an incident report): one "API Error: 401".
+// A SINGLE quoted mention (like this build task / an incident report): the login + 401 are written as
+// SEPARATE quoted strings (not the joined runtime line), so the adjacency guard excludes it.
 const singleQuote =
   'boss: scan the recent PTY frame for REPEATED "Please run /login" + "API Error: 401" so a quoted mention of 401 (like this message) does NOT trigger.';
 
@@ -61,32 +56,36 @@ function createMockAgent(getBuf: () => string, extra: Record<string, unknown> = 
 // ---------------------------------------------------------------------------
 // detectAuthWedge — repeated-evidence guard
 // ---------------------------------------------------------------------------
-describe('detectAuthWedge — repeated-401 signature', () => {
-  it('REAL wedge: login prompt + >=2 "API Error: 401" → wedged', () => {
+describe('detectAuthWedge — single live runtime line', () => {
+  it('REAL wedge: ONE joined runtime line ("...login · API Error: 401...") → wedged', () => {
     const r = detectAuthWedge(realAuthWedge);
     expect(r.wedged).toBe(true);
-    expect(r.occurrences).toBeGreaterThanOrEqual(2);
+    expect(r.occurrences).toBe(1); // a single occurrence is sufficient (the real fleet shape)
   });
 
-  it('single quoted mention (one 401) → NOT wedged (the quote guard)', () => {
+  it('login + 401 joined by a hyphen separator also matches', () => {
+    expect(detectAuthWedge('Please run /login - API Error: 401 something').wedged).toBe(true);
+  });
+
+  it('login + 401 with the "·" collapsed to spaces still matches', () => {
+    expect(detectAuthWedge('Please run /login  API Error: 401 something').wedged).toBe(true);
+  });
+
+  it('quoted/report form (login + 401 as SEPARATE quoted strings) → NOT wedged (adjacency guard)', () => {
     const r = detectAuthWedge(singleQuote);
-    expect(r.occurrences).toBe(1);
     expect(r.wedged).toBe(false);
   });
 
-  it('variant "Invalid authentication credentials" x2 → wedged', () => {
-    const f = 'API Error: 401 Invalid authentication credentials\nAPI Error: 401 Invalid authentication credentials';
-    expect(detectAuthWedge(f).wedged).toBe(true);
+  it('variant "Invalid authentication credentials" (single occurrence) → wedged', () => {
+    expect(detectAuthWedge('API Error: 401 Invalid authentication credentials').wedged).toBe(true);
   });
 
-  it('variant "socket connection was closed unexpectedly" x2 → wedged', () => {
-    const f = 'API Error: 401 The socket connection was closed unexpectedly\nAPI Error: 401 The socket connection was closed unexpectedly';
-    expect(detectAuthWedge(f).wedged).toBe(true);
+  it('variant "socket connection was closed unexpectedly" (single occurrence) → wedged', () => {
+    expect(detectAuthWedge('API Error: 401 The socket connection was closed unexpectedly').wedged).toBe(true);
   });
 
-  it('bare repeated "API Error: 401" with NO login/variant → NOT wedged', () => {
-    const f = 'API Error: 401\nAPI Error: 401\nAPI Error: 401';
-    expect(detectAuthWedge(f).wedged).toBe(false);
+  it('bare "API Error: 401" with NO login-join and NO known variant → NOT wedged', () => {
+    expect(detectAuthWedge('API Error: 401\nAPI Error: 401\nAPI Error: 401').wedged).toBe(false);
   });
 
   it('benign output → NOT wedged', () => {
