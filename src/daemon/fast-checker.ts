@@ -46,23 +46,25 @@ const AUTH_CIRCUIT_PAUSE_MS = 30 * 60_000;  // pause auto-restarts after trippin
 
 /**
  * Detect the live Claude Code 401 auth-wedge signature in a PTY frame (codex RCA 401-auth-wedge).
- * A SINGLE current-frame runtime line is sufficient — the login prompt joined to the 401 by a
- * ·/-/dash separator ("Please run /login · API Error: 401 ..."), or a known 401 variant line. The
- * adjacency join is the quote guard: an incident report writes the two as separate quoted strings,
- * which does not match. Repeated evidence for a restart is the caller's 3-static-poll gate, NOT a
- * second occurrence (real frames show one padded error line, retries KB apart). `occurrences` is
- * returned for observability only and no longer gates `wedged`.
+ * A SINGLE current-frame runtime line is sufficient AND required: the login prompt joined to the 401
+ * by a ·/-/dash/space separator ("Please run /login · API Error: 401 ..."). The real invalid-credentials
+ * and socket frames all carry this login-join, so there is no standalone variant fallback. The adjacency
+ * join is the quote guard: an incident report writes the two as separate quoted strings (or a bare
+ * variant phrase) which does not match. Repeated evidence for a restart is the caller's 3-static-poll
+ * gate, NOT a second occurrence (real frames show one padded error line, retries KB apart). `occurrences`
+ * is returned for observability only and no longer gates `wedged`.
  */
 export function detectAuthWedge(frame: string): { wedged: boolean; occurrences: number } {
   const f = stripControlChars(frame);
   const occurrences = (f.match(/API Error:\s*401/gi) || []).length;
-  // Runtime line: the login prompt joined to "API Error: 401" by a short run of whitespace /
-  // middle-dot / dash connectors (tolerant of the real "·"/"-"/spacing, and of "·" collapsing to
-  // spaces). The class excludes the +/quote chars a prose quote puts between the two strings, so an
-  // incident report ("Please run /login" + "API Error: 401") does NOT match.
-  const runtimeLine = /Please run \/login[\s·–—\-]{1,5}API Error:\s*401/i.test(f);
-  const variantLine = /API Error:\s*401\s+(Invalid authentication credentials|The socket connection was closed unexpectedly)/i.test(f);
-  return { wedged: runtimeLine || variantLine, occurrences };
+  // ONLY the joined live runtime line counts: the login prompt adjacent to "API Error: 401" via a
+  // short run of whitespace / middle-dot / dash connectors (tolerant of the real "·"/"-"/spacing, and
+  // of "·" collapsing to spaces). The class excludes the +/quote chars a prose quote puts between the
+  // two strings. The real invalid-credentials AND socket frames all carry this login-join (codex
+  // verified against stored logs), so there is NO standalone variant fallback — a variant phrase on
+  // its own (as it appears verbatim in incident reports / this RCA / gate traffic) must NOT trigger.
+  const wedged = /Please run \/login[\s·–—\-]{1,5}API Error:\s*401/i.test(f);
+  return { wedged, occurrences };
 }
 
 /**

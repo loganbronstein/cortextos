@@ -76,15 +76,20 @@ describe('detectAuthWedge — single live runtime line', () => {
     expect(r.wedged).toBe(false);
   });
 
-  it('variant "Invalid authentication credentials" (single occurrence) → wedged', () => {
-    expect(detectAuthWedge('API Error: 401 Invalid authentication credentials').wedged).toBe(true);
+  it('JOINED runtime line with the invalid-credentials variant → wedged', () => {
+    expect(detectAuthWedge('⏺ Please run /login · API Error: 401 Invalid authentication credentials\n❯').wedged).toBe(true);
   });
 
-  it('variant "socket connection was closed unexpectedly" (single occurrence) → wedged', () => {
-    expect(detectAuthWedge('API Error: 401 The socket connection was closed unexpectedly').wedged).toBe(true);
+  it('JOINED runtime line with the socket variant → wedged', () => {
+    expect(detectAuthWedge('⏺ Please run /login · API Error: 401 The socket connection was closed unexpectedly\n❯').wedged).toBe(true);
   });
 
-  it('bare "API Error: 401" with NO login-join and NO known variant → NOT wedged', () => {
+  it('prose-only variant phrase WITHOUT the login-join → NOT wedged (codex FP fix)', () => {
+    expect(detectAuthWedge('incident report says API Error: 401 Invalid authentication credentials happened once').wedged).toBe(false);
+    expect(detectAuthWedge('incident report says API Error: 401 The socket connection was closed unexpectedly happened once').wedged).toBe(false);
+  });
+
+  it('bare "API Error: 401" with NO login-join → NOT wedged', () => {
     expect(detectAuthWedge('API Error: 401\nAPI Error: 401\nAPI Error: 401').wedged).toBe(false);
   });
 
