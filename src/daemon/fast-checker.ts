@@ -46,24 +46,26 @@ const AUTH_CIRCUIT_PAUSE_MS = 30 * 60_000;  // pause auto-restarts after trippin
 
 /**
  * Detect the live Claude Code 401 auth-wedge signature in a PTY frame (codex RCA 401-auth-wedge).
- * A SINGLE current-frame runtime line is sufficient AND required: the login prompt joined to the 401
- * by a ·/-/dash/space separator ("Please run /login · API Error: 401 ..."). The real invalid-credentials
- * and socket frames all carry this login-join, so there is no standalone variant fallback. The adjacency
- * join is the quote guard: an incident report writes the two as separate quoted strings (or a bare
- * variant phrase) which does not match. Repeated evidence for a restart is the caller's 3-static-poll
- * gate, NOT a second occurrence (real frames show one padded error line, retries KB apart). `occurrences`
- * is returned for observability only and no longer gates `wedged`.
+ * Matches ONLY a real Claude UI error LINE: a line start (string start or after CR/LF) + the "⏺"
+ * output marker + the login prompt joined to "API Error: 401" by a ·/-/dash/space separator
+ * ("⏺ Please run /login · API Error: 401 ..."). The real invalid-credentials and socket frames all
+ * carry this ⏺-prefixed login-join, so there is no standalone variant fallback. The line-start + "⏺"
+ * anchor is the quote guard: our own gate/RCA traffic quotes the exact joined line INLINE in prose,
+ * where the "⏺" sits mid-line (after a quote) and is rejected. Repeated evidence for a restart is the
+ * caller's 3-static-poll gate, NOT a second occurrence (real frames show one padded error line, retries
+ * KB apart). `occurrences` is returned for observability only and no longer gates `wedged`.
  */
 export function detectAuthWedge(frame: string): { wedged: boolean; occurrences: number } {
   const f = stripControlChars(frame);
   const occurrences = (f.match(/API Error:\s*401/gi) || []).length;
-  // ONLY the joined live runtime line counts: the login prompt adjacent to "API Error: 401" via a
-  // short run of whitespace / middle-dot / dash connectors (tolerant of the real "·"/"-"/spacing, and
-  // of "·" collapsing to spaces). The class excludes the +/quote chars a prose quote puts between the
-  // two strings. The real invalid-credentials AND socket frames all carry this login-join (codex
-  // verified against stored logs), so there is NO standalone variant fallback — a variant phrase on
-  // its own (as it appears verbatim in incident reports / this RCA / gate traffic) must NOT trigger.
-  const wedged = /Please run \/login[\s·–—\-]{1,5}API Error:\s*401/i.test(f);
+  // ONLY a real Claude UI error LINE counts: anchored at a line start (string start or after CR/LF),
+  // the "⏺" output marker, then the login prompt adjacent to "API Error: 401" via a short run of
+  // whitespace / middle-dot / dash connectors (tolerant of the real "·"/"-"/spacing). The line-start +
+  // "⏺" anchor is the quote guard: our own gate/RCA traffic quotes the exact joined line INLINE in
+  // prose (e.g. ... "⏺ Please run /login · API Error: 401 ..." ...), where the "⏺" sits mid-line after
+  // a quote and so is rejected. The real invalid-credentials AND socket frames all carry this
+  // ⏺-prefixed login-join (codex verified against stored logs), so there is no standalone variant match.
+  const wedged = /(?:^|[\r\n])\s*⏺\s*Please run \/login[\s·–—\-]{1,5}API Error:\s*401/i.test(f);
   return { wedged, occurrences };
 }
 

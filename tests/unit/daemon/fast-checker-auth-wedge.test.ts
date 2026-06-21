@@ -63,30 +63,37 @@ describe('detectAuthWedge — single live runtime line', () => {
     expect(r.occurrences).toBe(1); // a single occurrence is sufficient (the real fleet shape)
   });
 
-  it('login + 401 joined by a hyphen separator also matches', () => {
-    expect(detectAuthWedge('Please run /login - API Error: 401 something').wedged).toBe(true);
+  it('real ⏺ line after CR/LF, hyphen separator → wedged', () => {
+    expect(detectAuthWedge('prev output\r\n⏺ Please run /login - API Error: 401 something\n❯').wedged).toBe(true);
   });
 
-  it('login + 401 with the "·" collapsed to spaces still matches', () => {
-    expect(detectAuthWedge('Please run /login  API Error: 401 something').wedged).toBe(true);
+  it('real ⏺ line with the "·" collapsed to spaces → wedged', () => {
+    expect(detectAuthWedge('prev\n⏺ Please run /login  API Error: 401 something\n❯').wedged).toBe(true);
   });
 
-  it('quoted/report form (login + 401 as SEPARATE quoted strings) → NOT wedged (adjacency guard)', () => {
-    const r = detectAuthWedge(singleQuote);
-    expect(r.wedged).toBe(false);
-  });
-
-  it('JOINED runtime line with the invalid-credentials variant → wedged', () => {
+  it('JOINED ⏺ runtime line with the invalid-credentials variant → wedged', () => {
     expect(detectAuthWedge('⏺ Please run /login · API Error: 401 Invalid authentication credentials\n❯').wedged).toBe(true);
   });
 
-  it('JOINED runtime line with the socket variant → wedged', () => {
-    expect(detectAuthWedge('⏺ Please run /login · API Error: 401 The socket connection was closed unexpectedly\n❯').wedged).toBe(true);
+  it('JOINED ⏺ runtime line with the socket variant (after CR/LF) → wedged', () => {
+    expect(detectAuthWedge('prev\r\n⏺ Please run /login · API Error: 401 The socket connection was closed unexpectedly\n❯').wedged).toBe(true);
   });
 
-  it('prose-only variant phrase WITHOUT the login-join → NOT wedged (codex FP fix)', () => {
+  it('quoted/report form (login + 401 as SEPARATE quoted strings) → NOT wedged (adjacency guard)', () => {
+    expect(detectAuthWedge(singleQuote).wedged).toBe(false);
+  });
+
+  it('prose-only variant phrase WITHOUT the login-join → NOT wedged', () => {
     expect(detectAuthWedge('incident report says API Error: 401 Invalid authentication credentials happened once').wedged).toBe(false);
     expect(detectAuthWedge('incident report says API Error: 401 The socket connection was closed unexpectedly happened once').wedged).toBe(false);
+  });
+
+  it('inline prose quoting the joined line (no ⏺ marker) → NOT wedged', () => {
+    expect(detectAuthWedge('incident report says Please run /login · API Error: 401 Invalid authentication credentials happened once').wedged).toBe(false);
+  });
+
+  it('inline prose quoting the EXACT ⏺ line mid-sentence → NOT wedged (line-start anchor)', () => {
+    expect(detectAuthWedge('Verified real shape "⏺ Please run /login · API Error: 401 Invalid authentication credentials … ❯" -> wedged true').wedged).toBe(false);
   });
 
   it('bare "API Error: 401" with NO login-join → NOT wedged', () => {
