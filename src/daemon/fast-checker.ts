@@ -25,6 +25,50 @@ const MODAL_SCAN_LEN = 8000;              // chars of the current frame; modal-d
                                           // counts chunks, not chars, so we slice the ring tail ourselves)
 const MODAL_RESTART_COOLDOWN_MS = 30_000; // after firing, suppress re-fire while stop()+start() completes
 
+// Auth-wedge (401) gate tuning (codex RCA 401-auth-wedge 2026-06-21). A live 401 auth wedge
+// keeps a running PTY alive (handleExit never fires) while every model call fails, so daemon
+// process-liveness lies and heartbeats/inbox work silently stall until a restart reloads auth.
+// The real fleet incident (codex-verified against stored stdout) renders ONE padded error line per
+// failed call, with retries kilobytes apart — so a SINGLE current-frame runtime line is the signature
+// (requiring two 401s in one scan window missed the actual wedge). FALSE-POSITIVE GUARD: the fleet
+// routinely QUOTES the error in incident reports (the RCA, this build task). Two guards: (a) ADJACENCY
+// — the runtime joins the login prompt and the 401 on one line with a ·/-/dash connector, whereas a
+// report writes them as separate quoted strings ("Please run /login" + "API Error: 401"), which the
+// pattern does not match; (b) for a RESTART, the frame must be byte-STATIC across AUTH_WEDGE_FROZEN_POLLS
+// consecutive polls — a healthy agent quoting the error is actively scrolling and never freezes. (Unlike
+// the /compact modal, a 401 wedge STILL shows the input prompt, so !hasIdleInputPrompt is not usable.)
+const AUTH_WEDGE_FROZEN_POLLS = 3;          // consecutive byte-static polls with the signature = repeated evidence
+const AUTH_WEDGE_SCAN_LEN = 8000;           // chars of the current frame to scan (one padded runtime error screen)
+const AUTH_RESTART_COOLDOWN_MS = 60_000;    // after firing, suppress re-fire while preserve stop()+start() completes
+const AUTH_CIRCUIT_WINDOW_MS = 30 * 60_000; // AUTH_CIRCUIT_MAX restarts within this window trips the breaker
+const AUTH_CIRCUIT_MAX = 3;
+const AUTH_CIRCUIT_PAUSE_MS = 30 * 60_000;  // pause auto-restarts after tripping; alert for manual /login
+
+/**
+ * Detect the live Claude Code 401 auth-wedge signature in a PTY frame (codex RCA 401-auth-wedge).
+ * Matches ONLY a real Claude UI error LINE: a line start (string start or after CR/LF) + the "⏺"
+ * output marker + the login prompt joined to "API Error: 401" by a ·/-/dash/space separator
+ * ("⏺ Please run /login · API Error: 401 ..."). The real invalid-credentials and socket frames all
+ * carry this ⏺-prefixed login-join, so there is no standalone variant fallback. The line-start + "⏺"
+ * anchor is the quote guard: our own gate/RCA traffic quotes the exact joined line INLINE in prose,
+ * where the "⏺" sits mid-line (after a quote) and is rejected. Repeated evidence for a restart is the
+ * caller's 3-static-poll gate, NOT a second occurrence (real frames show one padded error line, retries
+ * KB apart). `occurrences` is returned for observability only and no longer gates `wedged`.
+ */
+export function detectAuthWedge(frame: string): { wedged: boolean; occurrences: number } {
+  const f = stripControlChars(frame);
+  const occurrences = (f.match(/API Error:\s*401/gi) || []).length;
+  // ONLY a real Claude UI error LINE counts: anchored at a line start (string start or after CR/LF),
+  // the "⏺" output marker, then the login prompt adjacent to "API Error: 401" via a short run of
+  // whitespace / middle-dot / dash connectors (tolerant of the real "·"/"-"/spacing). The line-start +
+  // "⏺" anchor is the quote guard: our own gate/RCA traffic quotes the exact joined line INLINE in
+  // prose (e.g. ... "⏺ Please run /login · API Error: 401 ..." ...), where the "⏺" sits mid-line after
+  // a quote and so is rejected. The real invalid-credentials AND socket frames all carry this
+  // ⏺-prefixed login-join (codex verified against stored logs), so there is no standalone variant match.
+  const wedged = /(?:^|[\r\n])\s*⏺\s*Please run \/login[\s·–—\-]{1,5}API Error:\s*401/i.test(f);
+  return { wedged, occurrences };
+}
+
 /**
  * Fast message checker for a single agent.
  * Replaces fast-checker.sh: polls Telegram and inbox, injects into PTY.
@@ -77,6 +121,13 @@ export class FastChecker {
   private ctxModalLastTail: string | null = null; // current frame last poll the modal was seen frozen
   private ctxModalFrozenPolls: number = 0;         // consecutive polls: modal present + frame unchanged
   private ctxModalRestartAt: number = 0;           // last time the modal gate fired a restart (re-fire cooldown)
+  // Auth-wedge (401) gate — a SEPARATE detector + circuit from the context path (codex RCA).
+  private authWedgeLastFrame: string | null = null; // frame the last poll the auth signature was seen frozen
+  private authWedgeFrozenPolls: number = 0;         // consecutive byte-static polls: 401 signature present
+  private authRestartAt: number = 0;                // last time the auth gate fired a refresh (re-fire cooldown)
+  private authCircuitRestarts: number[] = [];       // timestamps of recent auth-triggered restarts
+  private authCircuitBrokenAt: number | null = null; // when the auth circuit tripped (null = healthy)
+  private authCircuitFile: string = '';             // persisted so --continue restarts don't reset the breaker
 
   constructor(
     agent: AgentProcess,
@@ -100,6 +151,8 @@ export class FastChecker {
     // Load persisted circuit breaker state so --continue restarts don't reset it
     this.ctxCircuitFile = join(paths.stateDir, '.ctx-circuit.json');
     this.loadCtxCircuit();
+    this.authCircuitFile = join(paths.stateDir, '.auth-circuit.json');
+    this.loadAuthCircuit();
   }
 
   /**
@@ -129,6 +182,13 @@ export class FastChecker {
     const HEARTBEAT_INTERVAL_MS = 50 * 60 * 1000;
     const agentName = this.agent.name;
     this.heartbeatTimer = setInterval(() => {
+      // Watchdog suppression (codex RCA): never claim "alive" over a live 401 auth wedge —
+      // a process that is running but 401-ing on every model call is NOT healthy, and a stale
+      // "[watchdog] alive" heartbeat would mask it. The checkAuthWedge poll path handles recovery.
+      if (!this.watchdogShouldReportAlive()) {
+        this.log(`[watchdog] ${agentName} auth-wedge signature present — suppressing alive heartbeat`);
+        return;
+      }
       const ts = new Date().toISOString();
       execFile('cortextos', ['bus', 'update-heartbeat', `[watchdog] ${agentName} alive — idle session ${ts}`], (err) => {
         if (err) this.log(`Heartbeat watchdog error: ${err.message}`);
@@ -227,6 +287,11 @@ export class FastChecker {
     if (this.chatId && this.telegramApi && this.isAgentActive()) {
       await this.sendTyping(this.telegramApi, this.chatId);
     }
+
+    // Auth-wedge monitor: detect a live 401 auth wedge (running PTY, failing model calls) and
+    // self-heal via a preserve refresh. Runs before the context check — a 401-wedged session
+    // can't act on a context handoff prompt anyway.
+    await this.checkAuthWedge();
 
     // Context monitor: check usage thresholds and fire warnings/handoffs
     await this.checkContextStatus();
@@ -1169,6 +1234,140 @@ Reply using: cortextos bus send-telegram ${chatId} '<your reply>'
     // session (BUG-011). The .force-fresh marker written above remains the durable
     // fallback for an auto/cold start if the daemon exits before this completes.
     this.agent.sessionRefresh('fresh').catch(err => this.log(`Context restart failed: ${err}`));
+  }
+
+  /**
+   * Whether the idle-session watchdog may claim this agent is "alive" (codex RCA).
+   * Returns false when the current PTY frame carries the live 401 auth-wedge signature, so the
+   * 50-min watchdog never papers over a session that is running but failing every model call.
+   */
+  private watchdogShouldReportAlive(): boolean {
+    // Defensive optional-call: this runs inside the setInterval watchdog callback, which is
+    // NOT wrapped in try/catch — if the buffer is unavailable, default to reporting alive
+    // (never throw out of the timer, and never suppress a heartbeat we can't justify).
+    const frame = (this.agent.getOutputBuffer?.()?.getRecent?.() ?? '').slice(-AUTH_WEDGE_SCAN_LEN);
+    return !detectAuthWedge(frame).wedged;
+  }
+
+  /**
+   * Detect and self-heal a live 401 auth wedge (codex RCA 401-auth-wedge 2026-06-21).
+   * A 401-wedged PTY keeps running (handleExit never fires) while every model call fails, so
+   * process liveness lies. We act only on REPEATED evidence: the 401 signature present AND the
+   * frame byte-STATIC across AUTH_WEDGE_FROZEN_POLLS consecutive polls (a healthy agent quoting
+   * the error is actively scrolling and never freezes; a single quoted mention has one occurrence
+   * and fails detectAuthWedge). Recovery is sessionRefresh('preserve') — a fresh Claude process
+   * that reloads Keychain auth while keeping conversation.
+   */
+  private async checkAuthWedge(): Promise<void> {
+    const now = Date.now();
+
+    // Auth circuit breaker: if tripped, stay paused until the window elapses (manual /login needed).
+    if (this.authCircuitBrokenAt !== null) {
+      if (now - this.authCircuitBrokenAt >= AUTH_CIRCUIT_PAUSE_MS) {
+        this.authCircuitBrokenAt = null;
+        this.authCircuitRestarts = [];
+        this.saveAuthCircuit();
+        this.log('Auth circuit breaker reset after pause');
+      } else {
+        return; // still paused
+      }
+    }
+
+    const frame = (this.agent.getOutputBuffer?.()?.getRecent?.() ?? '').slice(-AUTH_WEDGE_SCAN_LEN);
+    const { wedged } = detectAuthWedge(frame);
+
+    // Cooldown: a refresh just fired (stop()+start() takes seconds, the old frame is still
+    // visible). Suppressing re-fire keeps one wedge counting as one restart against the breaker.
+    if (now - this.authRestartAt < AUTH_RESTART_COOLDOWN_MS) return;
+
+    if (wedged) {
+      // Frozen gate: the signature must PERSIST byte-static across consecutive polls. A healthy
+      // agent quoting the 401 keeps scrolling (tail mutates) and never reaches the count.
+      this.authWedgeFrozenPolls = frame === this.authWedgeLastFrame ? this.authWedgeFrozenPolls + 1 : 1;
+      this.authWedgeLastFrame = frame;
+      if (this.authWedgeFrozenPolls >= AUTH_WEDGE_FROZEN_POLLS) {
+        this.log(`401 auth wedge frozen in PTY (static ${this.authWedgeFrozenPolls} polls, repeated 401 signature) — preserve-refreshing to reload auth`);
+        this.authWedgeFrozenPolls = 0;
+        this.authWedgeLastFrame = null;
+        this.authRestartAt = now;
+        this.forceAuthRestart('401 auth wedge — repeated login/401 signature, session frozen');
+      }
+    } else if (this.authWedgeFrozenPolls !== 0) {
+      // signature cleared or output moved on — reset frozen tracking
+      this.authWedgeFrozenPolls = 0;
+      this.authWedgeLastFrame = null;
+    }
+  }
+
+  /**
+   * Recover from a 401 auth wedge via sessionRefresh('preserve') (reload Keychain auth, keep
+   * conversation). A SEPARATE circuit breaker from the context one bounds restart loops: after
+   * AUTH_CIRCUIT_MAX restarts within AUTH_CIRCUIT_WINDOW_MS it stops auto-restarting and alerts
+   * Telegram + boss that fresh auth is still failing and a manual /login is required.
+   */
+  private forceAuthRestart(reason: string): void {
+    const now = Date.now();
+
+    // Circuit breaker window (persisted across --continue restarts).
+    this.authCircuitRestarts = this.authCircuitRestarts.filter(t => now - t < AUTH_CIRCUIT_WINDOW_MS);
+    if (this.authCircuitRestarts.length >= AUTH_CIRCUIT_MAX) {
+      this.authCircuitBrokenAt = now;
+      this.saveAuthCircuit();
+      const msg = `Auth circuit breaker TRIPPED for ${this.agent.name}: ${AUTH_CIRCUIT_MAX} auth-restarts in ${Math.round(AUTH_CIRCUIT_WINDOW_MS / 60_000)}min — preserve-refresh is NOT clearing the 401. MANUAL /login required. Auto-restart paused ${Math.round(AUTH_CIRCUIT_PAUSE_MS / 60_000)}min.`;
+      this.log(msg);
+      this.logEvent('auth_circuit_tripped', { agent: this.agent.name });
+      this.alert(msg);
+      return;
+    }
+    this.authCircuitRestarts.push(now);
+    this.saveAuthCircuit();
+
+    this.logEvent('auth_wedge_detected', { agent: this.agent.name, reason });
+    execFile('cortextos', ['bus', 'update-heartbeat', 'auth-wedge detected; restarting to reload Claude auth'], () => {});
+
+    // sessionRefresh('preserve') does stop()+start() with a fresh Claude process that reloads
+    // Keychain auth, keeping the conversation when possible (vs the context path's 'fresh').
+    this.agent.sessionRefresh('preserve').catch(err => this.log(`Auth refresh failed: ${err}`));
+  }
+
+  /**
+   * Alert a human + the orchestrator (Telegram to the agent's chat + a high-priority bus message
+   * to boss). Used when the auth circuit trips and only a manual /login can recover the fleet.
+   */
+  private alert(msg: string): void {
+    if (this.telegramApi && this.chatId) this.telegramApi.sendMessage(this.chatId, msg).catch(() => {});
+    if (this.agent.name !== 'boss') {
+      execFile('cortextos', ['bus', 'send-message', 'boss', 'high', msg], () => {});
+    }
+  }
+
+  /** Emit a bus action event (fire-and-forget) for dashboard observability. */
+  private logEvent(type: string, meta: Record<string, unknown>): void {
+    execFile('cortextos', ['bus', 'log-event', 'action', type, 'info', '--meta', JSON.stringify(meta)], () => {});
+  }
+
+  /** Load auth circuit breaker state from disk (persisted so --continue restarts can't reset it). */
+  private loadAuthCircuit(): void {
+    try {
+      if (!existsSync(this.authCircuitFile)) return;
+      const data = JSON.parse(readFileSync(this.authCircuitFile, 'utf-8'));
+      this.authCircuitRestarts = Array.isArray(data.restarts) ? data.restarts : [];
+      this.authCircuitBrokenAt = typeof data.brokenAt === 'number' ? data.brokenAt : null;
+    } catch {
+      // Start fresh on error
+    }
+  }
+
+  /** Persist auth circuit breaker state to disk after every update. */
+  private saveAuthCircuit(): void {
+    try {
+      writeFileSync(this.authCircuitFile, JSON.stringify({
+        restarts: this.authCircuitRestarts,
+        brokenAt: this.authCircuitBrokenAt,
+      }), 'utf-8');
+    } catch {
+      // Non-critical
+    }
   }
 
   /**
